@@ -2731,6 +2731,7 @@ static int ip6_convert_metrics(struct net *net, struct fib6_info *rt,
 			       struct fib6_config *cfg)
 {
 	int err = 0;
+	struct net *net = cfg->fc_nlinfo.nl_net;
 
 	if (cfg->fc_mx) {
 		rt->fib6_metrics = kzalloc(sizeof(*rt->fib6_metrics),
