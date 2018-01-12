@@ -269,6 +269,7 @@ union bpf_attr {
 					 * BPF_F_NUMA_NODE is set).
 					 */
 		__u8	map_name[BPF_OBJ_NAME_LEN];
+		__u32	map_ifindex;	/* ifindex of netdev to create on */
 	};
 
 	struct { /* anonymous struct used by BPF_MAP_*_ELEM commands */
