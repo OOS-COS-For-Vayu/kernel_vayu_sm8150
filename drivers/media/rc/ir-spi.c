@@ -289,6 +289,6 @@ static struct spi_driver ir_spi_driver = {
 
 module_spi_driver(ir_spi_driver);
 
-MODULE_AUTHOR("Andi Shyti <andi.shyti@samsung.com>");
+MODULE_AUTHOR("Andi Shyti <andi@etezian.org>");
 MODULE_DESCRIPTION("SPI IR LED");
 MODULE_LICENSE("GPL v2");
