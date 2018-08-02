@@ -45,6 +45,110 @@ void cgroup_bpf_put(struct cgroup *cgrp)
 	}
 }
 
+/* count number of elements in the list.
+ * it's slow but the list cannot be long
+ */
+static u32 prog_list_length(struct list_head *head)
+{
+	struct bpf_prog_list *pl;
+	u32 cnt = 0;
+
+	list_for_each_entry(pl, head, node) {
+		if (!pl->prog)
+			continue;
+		cnt++;
+	}
+	return cnt;
+}
+
+/* if parent has non-overridable prog attached,
+ * disallow attaching new programs to the descendent cgroup.
+ * if parent has overridable or multi-prog, allow attaching
+ */
+static bool hierarchy_allows_attach(struct cgroup *cgrp,
+				    enum bpf_attach_type type,
+				    u32 new_flags)
+{
+	struct cgroup *p;
+
+	p = cgroup_parent(cgrp);
+	if (!p)
+		return true;
+	do {
+		u32 flags = p->bpf.flags[type];
+		u32 cnt;
+
+		if (flags & BPF_F_ALLOW_MULTI)
+			return true;
+		cnt = prog_list_length(&p->bpf.progs[type]);
+		WARN_ON_ONCE(cnt > 1);
+		if (cnt == 1)
+			return !!(flags & BPF_F_ALLOW_OVERRIDE);
+		p = cgroup_parent(p);
+	} while (p);
+	return true;
+}
+
+/* compute a chain of effective programs for a given cgroup:
+ * start from the list of programs in this cgroup and add
+ * all parent programs.
+ * Note that parent's F_ALLOW_OVERRIDE-type program is yielding
+ * to programs in this cgroup
+ */
+static int compute_effective_progs(struct cgroup *cgrp,
+				   enum bpf_attach_type type,
+				   struct bpf_prog_array __rcu **array)
+{
+	struct bpf_prog_array *progs;
+	struct bpf_prog_list *pl;
+	struct cgroup *p = cgrp;
+	int cnt = 0;
+
+	/* count number of effective programs by walking parents */
+	do {
+		if (cnt == 0 || (p->bpf.flags[type] & BPF_F_ALLOW_MULTI))
+			cnt += prog_list_length(&p->bpf.progs[type]);
+		p = cgroup_parent(p);
+	} while (p);
+
+	progs = bpf_prog_array_alloc(cnt, GFP_KERNEL);
+	if (!progs)
+		return -ENOMEM;
+
+	/* populate the array with effective progs */
+	cnt = 0;
+	p = cgrp;
+	do {
+		if (cnt > 0 && !(p->bpf.flags[type] & BPF_F_ALLOW_MULTI))
+			continue;
+
+		list_for_each_entry(pl,
+				    &p->bpf.progs[type], node) {
+			if (!pl->prog)
+				continue;
+			progs->items[cnt].prog = pl->prog;
+			progs->items[cnt].cgroup_storage = pl->storage;
+			cnt++;
+		}
+	} while ((p = cgroup_parent(p)));
+
+	rcu_assign_pointer(*array, progs);
+	return 0;
+}
+
+static void activate_effective_progs(struct cgroup *cgrp,
+				     enum bpf_attach_type type,
+				     struct bpf_prog_array __rcu *array)
+{
+	struct bpf_prog_array __rcu *old_array;
+
+	old_array = xchg(&cgrp->bpf.effective[type], array);
+	/* free prog array after grace period, since __cgroup_bpf_run_*()
+	 * might be still walking the array
+	 */
+	bpf_prog_array_free(old_array);
+}
+
 /**
  * cgroup_bpf_inherit() - inherit effective programs from parent
  * @cgrp: the cgroup to modify
