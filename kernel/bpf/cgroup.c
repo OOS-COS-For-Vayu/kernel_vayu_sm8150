@@ -34,6 +34,12 @@ void cgroup_bpf_put(struct cgroup *cgrp)
 
 		if (prog) {
 			bpf_prog_put(prog);
+		list_for_each_entry_safe(pl, tmp, progs, node) {
+			list_del(&pl->node);
+			bpf_prog_put(pl->prog);
+			bpf_cgroup_storage_unlink(pl->storage);
+			bpf_cgroup_storage_free(pl->storage);
+			kfree(pl);
 			static_branch_dec(&cgroup_bpf_enabled_key);
 		}
 	}
@@ -92,6 +98,14 @@ int __cgroup_bpf_update(struct cgroup *cgrp, struct cgroup *parent,
 	struct bpf_prog *old_prog, *effective = NULL;
 	struct cgroup_subsys_state *pos;
 	bool overridable = true;
+	struct list_head *progs = &cgrp->bpf.progs[type];
+	struct bpf_prog *old_prog = NULL;
+	struct bpf_cgroup_storage *storage, *old_storage = NULL;
+	struct cgroup_subsys_state *css;
+	struct bpf_prog_list *pl;
+	bool pl_was_allocated;
+	u32 old_flags;
+	int err;
 
 	if (parent) {
 		overridable = !parent->bpf.disallow_override[type];
@@ -142,16 +156,199 @@ int __cgroup_bpf_update(struct cgroup *cgrp, struct cgroup *parent,
 					   effective);
 			desc->bpf.disallow_override[type] = !overridable;
 		}
+	storage = bpf_cgroup_storage_alloc(prog);
+	if (IS_ERR(storage))
+		return -ENOMEM;
+
+	if (flags & BPF_F_ALLOW_MULTI) {
+		list_for_each_entry(pl, progs, node) {
+			if (pl->prog == prog) {
+				/* disallow attaching the same prog twice */
+				bpf_cgroup_storage_free(storage);
+				return -EINVAL;
+			}
+		}
+
+		pl = kmalloc(sizeof(*pl), GFP_KERNEL);
+		if (!pl) {
+			bpf_cgroup_storage_free(storage);
+			return -ENOMEM;
+		}
+		pl_was_allocated = true;
+		pl->prog = prog;
+		pl->storage = storage;
+		list_add_tail(&pl->node, progs);
+	} else {
+		if (list_empty(progs)) {
+			pl = kmalloc(sizeof(*pl), GFP_KERNEL);
+			if (!pl) {
+				bpf_cgroup_storage_free(storage);
+				return -ENOMEM;
+			}
+			pl_was_allocated = true;
+			list_add_tail(&pl->node, progs);
+		} else {
+			pl = list_first_entry(progs, typeof(*pl), node);
+			old_prog = pl->prog;
+			old_storage = pl->storage;
+			bpf_cgroup_storage_unlink(old_storage);
+			pl_was_allocated = false;
+		}
+		pl->prog = prog;
+		pl->storage = storage;
 	}
 
 	if (prog)
 		static_branch_inc(&cgroup_bpf_enabled_key);
 
+	/* allocate and recompute effective prog arrays */
+	css_for_each_descendant_pre(css, &cgrp->self) {
+		struct cgroup *desc = container_of(css, struct cgroup, self);
+
+		err = compute_effective_progs(desc, type, &desc->bpf.inactive);
+		if (err)
+			goto cleanup;
+	}
+
+	/* all allocations were successful. Activate all prog arrays */
+	css_for_each_descendant_pre(css, &cgrp->self) {
+		struct cgroup *desc = container_of(css, struct cgroup, self);
+
+		activate_effective_progs(desc, type, desc->bpf.inactive);
+		desc->bpf.inactive = NULL;
+	}
+
+	static_branch_inc(&cgroup_bpf_enabled_key);
+	if (old_storage)
+		bpf_cgroup_storage_free(old_storage);
 	if (old_prog) {
 		bpf_prog_put(old_prog);
 		static_branch_dec(&cgroup_bpf_enabled_key);
 	}
+	bpf_cgroup_storage_link(storage, cgrp, type);
 	return 0;
+
+cleanup:
+	/* oom while computing effective. Free all computed effective arrays
+	 * since they were not activated
+	 */
+	css_for_each_descendant_pre(css, &cgrp->self) {
+		struct cgroup *desc = container_of(css, struct cgroup, self);
+
+		bpf_prog_array_free(desc->bpf.inactive);
+		desc->bpf.inactive = NULL;
+	}
+
+       /* and cleanup the prog list */
+       pl->prog = old_prog;
+       bpf_cgroup_storage_free(pl->storage);
+       pl->storage = old_storage;
+       bpf_cgroup_storage_link(old_storage, cgrp, type);
+       if (pl_was_allocated) {
+               list_del(&pl->node);
+               kfree(pl);
+       }
+       return err;
+}
+
+/**
+ * __cgroup_bpf_detach() - Detach the program from a cgroup, and
+ *                         propagate the change to descendants
+ * @cgrp: The cgroup which descendants to traverse
+ * @prog: A program to detach or NULL
+ * @type: Type of detach operation
+ *
+ * Must be called with cgroup_mutex held.
+ */
+int __cgroup_bpf_detach(struct cgroup *cgrp, struct bpf_prog *prog,
+			enum bpf_attach_type type, u32 unused_flags)
+{
+	struct list_head *progs = &cgrp->bpf.progs[type];
+	u32 flags = cgrp->bpf.flags[type];
+	struct bpf_prog *old_prog = NULL;
+	struct cgroup_subsys_state *css;
+	struct bpf_prog_list *pl;
+	int err;
+
+	if (flags & BPF_F_ALLOW_MULTI) {
+		if (!prog)
+			/* to detach MULTI prog the user has to specify valid FD
+			 * of the program to be detached
+			 */
+			return -EINVAL;
+	} else {
+		if (list_empty(progs))
+			/* report error when trying to detach and nothing is attached */
+			return -ENOENT;
+	}
+
+	if (flags & BPF_F_ALLOW_MULTI) {
+		/* find the prog and detach it */
+		list_for_each_entry(pl, progs, node) {
+			if (pl->prog != prog)
+				continue;
+			old_prog = prog;
+			/* mark it deleted, so it's ignored while
+			 * recomputing effective
+			 */
+			pl->prog = NULL;
+			break;
+		}
+		if (!old_prog)
+			return -ENOENT;
+	} else {
+		/* to maintain backward compatibility NONE and OVERRIDE cgroups
+		 * allow detaching with invalid FD (prog==NULL)
+		 */
+		pl = list_first_entry(progs, typeof(*pl), node);
+		old_prog = pl->prog;
+		pl->prog = NULL;
+	}
+
+	/* allocate and recompute effective prog arrays */
+	css_for_each_descendant_pre(css, &cgrp->self) {
+		struct cgroup *desc = container_of(css, struct cgroup, self);
+
+		err = compute_effective_progs(desc, type, &desc->bpf.inactive);
+		if (err)
+			goto cleanup;
+	}
+
+	/* all allocations were successful. Activate all prog arrays */
+	css_for_each_descendant_pre(css, &cgrp->self) {
+		struct cgroup *desc = container_of(css, struct cgroup, self);
+
+		activate_effective_progs(desc, type, desc->bpf.inactive);
+		desc->bpf.inactive = NULL;
+	}
+
+	/* now can actually delete it from this cgroup list */
+	list_del(&pl->node);
+	bpf_cgroup_storage_unlink(pl->storage);
+	bpf_cgroup_storage_free(pl->storage);
+	kfree(pl);
+	if (list_empty(progs))
+		/* last program was detached, reset flags to zero */
+		cgrp->bpf.flags[type] = 0;
+
+	bpf_prog_put(old_prog);
+	static_branch_dec(&cgroup_bpf_enabled_key);
+	return 0;
+
+cleanup:
+	/* oom while computing effective. Free all computed effective arrays
+	 * since they were not activated
+	 */
+	css_for_each_descendant_pre(css, &cgrp->self) {
+		struct cgroup *desc = container_of(css, struct cgroup, self);
+
+		bpf_prog_array_free(desc->bpf.inactive);
+		desc->bpf.inactive = NULL;
+	}
+
+	/* and restore back old_prog */
+	pl->prog = old_prog;
+	return err;
 }
 
 /* Must be called with cgroup_mutex held to avoid races. */
