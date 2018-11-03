@@ -22,6 +22,7 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
+#include <linux/pstore.h>
 #include <linux/types.h>
 
 /*
@@ -41,6 +42,43 @@ struct persistent_ram_ecc_info {
 	int poly;
 };
 
+/**
+ * struct persistent_ram_zone - Details of a persistent RAM zone (PRZ)
+ *                              used as a pstore backend
+ *
+ * @paddr:	physical address of the mapped RAM area
+ * @size:	size of mapping
+ * @label:	unique name of this PRZ
+ * @type:	frontend type for this PRZ
+ * @flags:	holds PRZ_FLAGS_* bits
+ *
+ * @buffer_lock:
+ *	locks access to @buffer "size" bytes and "start" offset
+ * @buffer:
+ *	pointer to actual RAM area managed by this PRZ
+ * @buffer_size:
+ *	bytes in @buffer->data (not including any trailing ECC bytes)
+ *
+ * @par_buffer:
+ *	pointer into @buffer->data containing ECC bytes for @buffer->data
+ * @par_header:
+ *	pointer into @buffer->data containing ECC bytes for @buffer header
+ *	(i.e. all fields up to @data)
+ * @rs_decoder:
+ *	RSLIB instance for doing ECC calculations
+ * @corrected_bytes:
+ *	ECC corrected bytes accounting since boot
+ * @bad_blocks:
+ *	ECC uncorrectable bytes accounting since boot
+ * @ecc_info:
+ *	ECC configuration details
+ *
+ * @old_log:
+ *	saved copy of @buffer->data prior to most recent wipe
+ * @old_log_size:
+ *	bytes contained in @old_log
+ *
+ */
 struct persistent_ram_zone {
 	phys_addr_t paddr;
 	size_t size;
@@ -49,6 +87,7 @@ struct persistent_ram_zone {
 	size_t buffer_size;
 	u32 flags;
 	raw_spinlock_t buffer_lock;
+	enum pstore_type_id type;
 
 	/* ECC correction */
 	char *par_buffer;
