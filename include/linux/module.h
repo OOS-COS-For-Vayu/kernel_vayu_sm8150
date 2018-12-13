@@ -438,9 +438,15 @@ struct module {
 	unsigned int num_tracepoints;
 	struct tracepoint * const *tracepoints_ptrs;
 #endif
+<<<<<<< HEAD
 #ifdef CONFIG_TREE_SRCU
 	unsigned int num_srcu_structs;
 	struct srcu_struct **srcu_struct_ptrs;
+=======
+#ifdef CONFIG_BPF_EVENTS
+	unsigned int num_bpf_raw_events;
+	struct bpf_raw_event_map *bpf_raw_events;
+>>>>>>> 3188f29336753 (BACKPORT: bpf: support raw tracepoints in modules)
 #endif
 #ifdef HAVE_JUMP_LABEL
 	struct jump_entry *jump_entries;
