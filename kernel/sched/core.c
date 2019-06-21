@@ -5835,6 +5835,11 @@ SYSCALL_DEFINE4(sched_getattr, pid_t, pid, struct sched_attr __user *, uattr,
 	kattr.sched_util_max = p->uclamp_req[UCLAMP_MAX].value;
 #endif
 
+#ifdef CONFIG_UCLAMP_TASK
+	attr.sched_util_min = p->uclamp_req[UCLAMP_MIN].value;
+	attr.sched_util_max = p->uclamp_req[UCLAMP_MAX].value;
+#endif
+
 	rcu_read_unlock();
 
 	return sched_attr_copy_to_user(uattr, &kattr, usize);
