@@ -92,7 +92,7 @@ MODULE_PARM_DESC(ramoops_ecc,
 		"bytes ECC)");
 
 static int ramoops_dump_oops = -1;
-module_param_named(dump_oops, ramoops_dump_oops, int, 0400);
+module_param_named(dump_oops, ramoops_dump_oops, int, 0600);
 MODULE_PARM_DESC(dump_oops,
 		 "(deprecated: use max_reason instead) set to 1 to dump oopses & panics, 0 to only dump panics");
 
@@ -122,7 +122,6 @@ struct ramoops_context {
 };
 
 static struct platform_device *dummy;
-static struct ramoops_platform_data *dummy_data;
 
 static int ramoops_pstore_open(struct pstore_info *psi)
 {
@@ -412,6 +411,20 @@ static int notrace ramoops_pstore_write(struct pstore_record *record)
 				     record->size);
 		return 0;
 	}
+
+	if (record->type != PSTORE_TYPE_DMESG)
+		return -EINVAL;
+
+	/*
+	 * We could filter on record->reason here if we wanted to (which
+	 * would duplicate what happened before the "max_reason" setting
+	 * was added), but that would defeat the purpose of a system
+	 * changing printk.always_kmsg_dump, so instead log everything that
+	 * the kmsg dumper sends us, since it should be doing the filtering
+	 * based on the combination of printk.always_kmsg_dump and our
+	 * requested "max_reason".
+	 */
+
 
 	/*
 	 * Explicitly only take the first part of any new crash.
@@ -718,13 +731,13 @@ static int ramoops_parse_dt(struct platform_device *pdev,
 		field = value;						\
 	}
 
-	parse_u32("record-size", pdata->record_size, 0);
-	parse_u32("console-size", pdata->console_size, 0);
-	parse_u32("ftrace-size", pdata->ftrace_size, 0);
-	parse_u32("pmsg-size", pdata->pmsg_size, 0);
-	parse_u32("ecc-size", pdata->ecc_info.ecc_size, 0);
-	parse_u32("flags", pdata->flags, 0);
-	parse_u32("max-reason", pdata->max_reason, pdata->max_reason);
+	parse_size("record-size", pdata->record_size);
+	parse_size("console-size", pdata->console_size);
+	parse_size("ftrace-size", pdata->ftrace_size);
+	parse_size("pmsg-size", pdata->pmsg_size);
+	parse_size("ecc-size", pdata->ecc_info.ecc_size);
+	parse_size("flags", pdata->flags);
+	parse_size("max-reason", pdata->max_reason);
 
 #undef parse_u32
 
@@ -934,44 +947,41 @@ static struct platform_driver ramoops_driver = {
 
 static void ramoops_register_dummy(void)
 {
+	struct ramoops_platform_data pdata;
+
 	if (!mem_size)
 		return;
 
 	pr_info("using module parameters\n");
 
-	dummy_data = kzalloc(sizeof(*dummy_data), GFP_KERNEL);
-	if (!dummy_data) {
-		pr_info("could not allocate pdata\n");
-		return;
-	}
-
-	dummy_data->mem_size = mem_size;
-	dummy_data->mem_address = mem_address;
-	dummy_data->mem_type = mem_type;
-	dummy_data->record_size = record_size;
-	dummy_data->console_size = ramoops_console_size;
-	dummy_data->ftrace_size = ramoops_ftrace_size;
-	dummy_data->pmsg_size = ramoops_pmsg_size;
+	memset(&pdata, 0, sizeof(pdata));
+	pdata.mem_size = mem_size;
+	pdata.mem_address = mem_address;
+	pdata.mem_type = mem_type;
+	pdata.record_size = record_size;
+	pdata.console_size = ramoops_console_size;
+	pdata.ftrace_size = ramoops_ftrace_size;
+	pdata.pmsg_size = ramoops_pmsg_size;
 	/* If "max_reason" is set, its value has priority over "dump_oops". */
 	if (ramoops_max_reason >= 0)
-		dummy_data->max_reason = ramoops_max_reason;
+		pdata.max_reason = ramoops_max_reason;
 	/* Otherwise, if "dump_oops" is set, parse it into "max_reason". */
 	else if (ramoops_dump_oops != -1)
-		dummy_data->max_reason = ramoops_dump_oops ? KMSG_DUMP_OOPS
+		pdata.max_reason = ramoops_dump_oops ? KMSG_DUMP_OOPS
 						     : KMSG_DUMP_PANIC;
 	/* And if neither are explicitly set, use the default. */
 	else
-		dummy_data->max_reason = KMSG_DUMP_OOPS;
-	dummy_data->flags = RAMOOPS_FLAG_FTRACE_PER_CPU;
+		pdata.max_reason = KMSG_DUMP_OOPS;
+	pdata.flags = RAMOOPS_FLAG_FTRACE_PER_CPU;
 
 	/*
 	 * For backwards compatibility ramoops.ecc=1 means 16 bytes ECC
 	 * (using 1 byte for ECC isn't much of use anyway).
 	 */
-	dummy_data->ecc_info.ecc_size = ramoops_ecc == 1 ? 16 : ramoops_ecc;
+	pdata.ecc_info.ecc_size = ramoops_ecc == 1 ? 16 : ramoops_ecc;
 
 	dummy = platform_device_register_data(NULL, "ramoops", -1,
-			dummy_data, sizeof(struct ramoops_platform_data));
+			&pdata, sizeof(pdata));
 	if (IS_ERR(dummy)) {
 		pr_info("could not create platform device: %ld\n",
 			PTR_ERR(dummy));
@@ -1034,7 +1044,6 @@ static void __exit ramoops_exit(void)
 {
 	platform_driver_unregister(&ramoops_driver);
 	platform_device_unregister(dummy);
-	kfree(dummy_data);
 }
 module_exit(ramoops_exit);
 
