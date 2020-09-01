@@ -43,7 +43,7 @@ void arch_set_freq_scale( const struct cpumask *cpus, unsigned long cur_freq,
 	}
 }
 
-void arch_set_max_freq_scale(struct cpumask *cpus,
+void arch_set_max_freq_scale(const struct cpumask *cpus,
 			     unsigned long policy_max_freq)
 {
 	unsigned long scale, max_freq;
