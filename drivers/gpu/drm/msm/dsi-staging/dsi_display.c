@@ -62,6 +62,7 @@ static const struct of_device_id dsi_display_dt_match[] = {
 };
 
 struct dsi_display *primary_display;
+static unsigned int cur_refresh_rate = 60;
 
 static void dsi_display_mask_ctrl_error_interrupts(struct dsi_display *display,
 			u32 mask, bool enable)
@@ -6705,6 +6706,9 @@ int dsi_display_validate_mode_change(struct dsi_display *display,
 		/* dfps and dynamic clock with const fps use case */
 		if (dsi_display_mode_switch_dfps(cur_mode, adj_mode)) {
 			dsi_panel_get_dfps_caps(display->panel, &dfps_caps);
+			if (cur_mode->timing.refresh_rate != adj_mode->timing.refresh_rate) {
+				WRITE_ONCE(cur_refresh_rate, adj_mode->timing.refresh_rate);
+			}
 			if (dfps_caps.dfps_support ||
 			    dyn_clk_caps->maintain_const_fps) {
 				pr_debug("mode switch is variable refresh\n");
@@ -7628,7 +7632,10 @@ int dsi_display_pre_commit(void *display,
 
 	return rc;
 }
-
+unsigned int dsi_panel_get_refresh_rate(void)
+{
+	return READ_ONCE(cur_refresh_rate);
+}
 int dsi_display_enable(struct dsi_display *display)
 {
 	int rc = 0;
