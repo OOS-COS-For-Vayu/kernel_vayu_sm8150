@@ -11,6 +11,10 @@
 #include <linux/rcupdate_wait.h>
 #include <trace/hooks/memory.h>
 
+/* Forward declarations */
+static struct bpf_tramp_image *bpf_tramp_image_alloc(u64 key, u32 idx);
+static void bpf_tramp_image_put(struct bpf_tramp_image *im);
+
 /* dummy _ops. The verifier will operate on target program's ops. */
 const struct bpf_verifier_ops bpf_extension_verifier_ops = {
 };
@@ -61,16 +65,17 @@ void bpf_image_ksym_del(struct bpf_ksym *ksym)
 
 static void bpf_trampoline_ksym_add(struct bpf_trampoline *tr)
 {
-	struct bpf_ksym *ksym = &tr->ksym;
+	struct bpf_ksym *ksym = &tr->cur_image->ksym;
 
 	snprintf(ksym->name, KSYM_NAME_LEN, "bpf_trampoline_%llu", tr->key);
-	bpf_image_ksym_add(tr->image, ksym);
+	bpf_image_ksym_add(tr->cur_image->image, ksym);
 }
 
 static struct bpf_trampoline *bpf_trampoline_lookup(u64 key)
 {
 	struct bpf_trampoline *tr;
 	struct hlist_head *head;
+	struct bpf_tramp_image *im;
 	void *image;
 	int i;
 
@@ -86,9 +91,8 @@ static struct bpf_trampoline *bpf_trampoline_lookup(u64 key)
 	if (!tr)
 		goto out;
 
-	/* is_root was checked earlier. No need for bpf_jit_charge_modmem() */
-	image = bpf_jit_alloc_exec_page();
-	if (!image) {
+	im = bpf_tramp_image_alloc(tr->key, 0);
+	if (IS_ERR(im)) {
 		kfree(tr);
 		tr = NULL;
 		goto out;
@@ -101,9 +105,7 @@ static struct bpf_trampoline *bpf_trampoline_lookup(u64 key)
 	mutex_init(&tr->mutex);
 	for (i = 0; i < BPF_TRAMP_MAX; i++)
 		INIT_HLIST_HEAD(&tr->progs_hlist[i]);
-	tr->image = image;
-	INIT_LIST_HEAD_RCU(&tr->ksym.lnode);
-	bpf_trampoline_ksym_add(tr);
+	tr->cur_image = im;
 out:
 	mutex_unlock(&trampoline_mutex);
 	return tr;
@@ -323,8 +325,7 @@ out:
 
 static int bpf_trampoline_update(struct bpf_trampoline *tr)
 {
-	void *old_image = tr->image + ((tr->selector + 1) & 1) * PAGE_SIZE/2;
-	void *new_image = tr->image + (tr->selector & 1) * PAGE_SIZE/2;
+	struct bpf_tramp_image *im;
 	struct bpf_tramp_progs *tprogs;
 	u32 flags = BPF_TRAMP_F_RESTORE_REGS;
 	int err, total;
@@ -334,8 +335,16 @@ static int bpf_trampoline_update(struct bpf_trampoline *tr)
 		return PTR_ERR(tprogs);
 
 	if (total == 0) {
-		err = unregister_fentry(tr, old_image);
+		err = unregister_fentry(tr, tr->cur_image->image);
+		bpf_tramp_image_put(tr->cur_image);
+		tr->cur_image = NULL;
 		tr->selector = 0;
+		goto out;
+	}
+
+	im = bpf_tramp_image_alloc(tr->key, tr->selector);
+	if (IS_ERR(im)) {
+		err = PTR_ERR(im);
 		goto out;
 	}
 
@@ -343,32 +352,25 @@ static int bpf_trampoline_update(struct bpf_trampoline *tr)
 	    tprogs[BPF_TRAMP_MODIFY_RETURN].nr_progs)
 		flags = BPF_TRAMP_F_CALL_ORIG | BPF_TRAMP_F_SKIP_FRAME;
 
-	/* Though the second half of trampoline page is unused a task could be
-	 * preempted in the middle of the first half of trampoline and two
-	 * updates to trampoline would change the code from underneath the
-	 * preempted task. Hence wait for tasks to voluntarily schedule or go
-	 * to userspace.
-	 * The same trampoline can hold both sleepable and non-sleepable progs.
-	 * synchronize_rcu_tasks_trace() is needed to make sure all sleepable
-	 * programs finish executing.
-	 * Wait for these two grace periods together.
-	 */
-	synchronize_rcu_mult(call_rcu_tasks, call_rcu_tasks_trace);
-
-	err = arch_prepare_bpf_trampoline(new_image, new_image + PAGE_SIZE / 2,
+	err = arch_prepare_bpf_trampoline(im, im->image, im->image + PAGE_SIZE,
 					  &tr->func.model, flags, tprogs,
 					  tr->func.addr);
 	if (err < 0)
 		goto out;
 
-	if (tr->selector)
+	WARN_ON(tr->cur_image && tr->selector == 0);
+	WARN_ON(!tr->cur_image && tr->selector);
+	if (tr->cur_image)
 		/* progs already running at this address */
-		err = modify_fentry(tr, old_image, new_image);
+		err = modify_fentry(tr, tr->cur_image->image, im->image);
 	else
 		/* first time registering */
-		err = register_fentry(tr, new_image);
+		err = register_fentry(tr, im->image);
 	if (err)
 		goto out;
+	if (tr->cur_image)
+		bpf_tramp_image_put(tr->cur_image);
+	tr->cur_image = im;
 	tr->selector++;
 out:
 	kfree(tprogs);
@@ -505,7 +507,12 @@ void bpf_trampoline_put(struct bpf_trampoline *tr)
 	for (i = 0; i < BPF_TRAMP_MAX; i++)
 		if (WARN_ON_ONCE(!hlist_empty(&tr->progs_hlist[i])))
 			goto out;
-bpf_image_ksym_del(&tr->ksym);
+
+	if (tr->cur_image) {
+		bpf_image_ksym_del(&tr->cur_image->ksym);
+		bpf_tramp_image_put(tr->cur_image);
+		tr->cur_image = NULL;
+	}
 
 	/* This code will be executed even when the last bpf_tramp_image
 	 * is alive. All progs are detached from the trampoline and the
@@ -514,7 +521,6 @@ bpf_image_ksym_del(&tr->ksym);
 	 * multiple rcu callbacks.
 	 */
 	synchronize_rcu_tasks();
-	bpf_jit_free_exec(tr->image);
 	hlist_del(&tr->hlist);
 	kfree(tr);
 out:
@@ -574,7 +580,7 @@ void notrace __bpf_prog_exit_sleepable(void)
 }
 
 int __weak
-arch_prepare_bpf_trampoline(void *image, void *image_end,
+arch_prepare_bpf_trampoline(struct bpf_tramp_image *tr, void *image, void *image_end,
 			    const struct btf_func_model *m, u32 flags,
 			    struct bpf_tramp_progs *tprogs,
 			    void *orig_call)
