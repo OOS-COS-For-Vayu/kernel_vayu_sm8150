@@ -9,6 +9,7 @@
 #include <linux/btf.h>
 #include <linux/rcupdate_trace.h>
 #include <linux/rcupdate_wait.h>
+#include <trace/hooks/memory.h>
 
 /* dummy _ops. The verifier will operate on target program's ops. */
 const struct bpf_verifier_ops bpf_extension_verifier_ops = {
@@ -38,6 +39,7 @@ void *bpf_jit_alloc_exec_page(void)
 	 * everytime new program is attached or detached.
 	 */
 	set_memory_x((long)image, 1);
+	trace_android_vh_set_memory_x((unsigned long)image, 1);
 	return image;
 }
 
@@ -183,6 +185,140 @@ bpf_trampoline_get_progs(const struct bpf_trampoline *tr, int *total)
 			*progs++ = aux->prog;
 	}
 	return tprogs;
+}
+
+static void __bpf_tramp_image_put_deferred(struct work_struct *work)
+{
+	struct bpf_tramp_image *im;
+
+	im = container_of(work, struct bpf_tramp_image, work);
+	bpf_image_ksym_del(&im->ksym);
+	trace_android_vh_set_memory_nx((unsigned long)im->image, 1);
+	bpf_jit_free_exec(im->image);
+	bpf_jit_uncharge_modmem(1);
+	percpu_ref_exit(&im->pcref);
+	kfree_rcu(im, rcu);
+}
+
+/* callback, fexit step 3 or fentry step 2 */
+static void __bpf_tramp_image_put_rcu(struct rcu_head *rcu)
+{
+	struct bpf_tramp_image *im;
+
+	im = container_of(rcu, struct bpf_tramp_image, rcu);
+	INIT_WORK(&im->work, __bpf_tramp_image_put_deferred);
+	schedule_work(&im->work);
+}
+
+/* callback, fexit step 2. Called after percpu_ref_kill confirms. */
+static void __bpf_tramp_image_release(struct percpu_ref *pcref)
+{
+	struct bpf_tramp_image *im;
+
+	im = container_of(pcref, struct bpf_tramp_image, pcref);
+	call_rcu_tasks(&im->rcu, __bpf_tramp_image_put_rcu);
+}
+
+/* callback, fexit or fentry step 1 */
+static void __bpf_tramp_image_put_rcu_tasks(struct rcu_head *rcu)
+{
+	struct bpf_tramp_image *im;
+
+	im = container_of(rcu, struct bpf_tramp_image, rcu);
+	if (im->ip_after_call)
+		/* the case of fmod_ret/fexit trampoline and CONFIG_PREEMPTION=y */
+		percpu_ref_kill(&im->pcref);
+	else
+		/* the case of fentry trampoline */
+		call_rcu_tasks(&im->rcu, __bpf_tramp_image_put_rcu);
+}
+
+static void bpf_tramp_image_put(struct bpf_tramp_image *im)
+{
+	/* The trampoline image that calls original function is using:
+	 * rcu_read_lock_trace to protect sleepable bpf progs
+	 * rcu_read_lock to protect normal bpf progs
+	 * percpu_ref to protect trampoline itself
+	 * rcu tasks to protect trampoline asm not covered by percpu_ref
+	 * (which are few asm insns before __bpf_tramp_enter and
+	 *  after __bpf_tramp_exit)
+	 *
+	 * The trampoline is unreachable before bpf_tramp_image_put().
+	 *
+	 * First, patch the trampoline to avoid calling into fexit progs.
+	 * The progs will be freed even if the original function is still
+	 * executing or sleeping.
+	 * In case of CONFIG_PREEMPT=y use call_rcu_tasks() to wait on
+	 * first few asm instructions to execute and call into
+	 * __bpf_tramp_enter->percpu_ref_get.
+	 * Then use percpu_ref_kill to wait for the trampoline and the original
+	 * function to finish.
+	 * Then use call_rcu_tasks() to make sure few asm insns in
+	 * the trampoline epilogue are done as well.
+	 *
+	 * In !PREEMPT case the task that got interrupted in the first asm
+	 * insns won't go through an RCU quiescent state which the
+	 * percpu_ref_kill will be waiting for. Hence the first
+	 * call_rcu_tasks() is not necessary.
+	 */
+	if (im->ip_after_call) {
+		int err = bpf_arch_text_poke(im->ip_after_call, BPF_MOD_JUMP,
+					     NULL, im->ip_epilogue);
+		WARN_ON(err);
+		if (IS_ENABLED(CONFIG_PREEMPTION))
+			call_rcu_tasks(&im->rcu, __bpf_tramp_image_put_rcu_tasks);
+		else
+			percpu_ref_kill(&im->pcref);
+		return;
+	}
+
+	/* The trampoline without fexit and fmod_ret progs doesn't call original
+	 * function and doesn't use percpu_ref.
+	 * Use call_rcu_tasks_trace() to wait for sleepable progs to finish.
+	 * Then use call_rcu_tasks() to wait for the rest of trampoline asm
+	 * and normal progs.
+	 */
+	call_rcu_tasks_trace(&im->rcu, __bpf_tramp_image_put_rcu_tasks);
+}
+
+static struct bpf_tramp_image *bpf_tramp_image_alloc(u64 key, u32 idx)
+{
+	struct bpf_tramp_image *im;
+	struct bpf_ksym *ksym;
+	void *image;
+	int err = -ENOMEM;
+
+	im = kzalloc(sizeof(*im), GFP_KERNEL);
+	if (!im)
+		goto out;
+
+	err = bpf_jit_charge_modmem(1);
+	if (err)
+		goto out_free_im;
+
+	err = -ENOMEM;
+	im->image = image = bpf_jit_alloc_exec_page();
+	if (!image)
+		goto out_uncharge;
+
+	err = percpu_ref_init(&im->pcref, __bpf_tramp_image_release, 0, GFP_KERNEL);
+	if (err)
+		goto out_free_image;
+
+	ksym = &im->ksym;
+	INIT_LIST_HEAD_RCU(&ksym->lnode);
+	snprintf(ksym->name, KSYM_NAME_LEN, "bpf_trampoline_%llu_%u", key, idx);
+	bpf_image_ksym_add(image, ksym);
+	return im;
+
+out_free_image:
+	bpf_jit_free_exec(im->image);
+out_uncharge:
+	bpf_jit_uncharge_modmem(1);
+out_free_im:
+	kfree(im);
+out:
+	return ERR_PTR(err);
 }
 
 static int bpf_trampoline_update(struct bpf_trampoline *tr)
@@ -365,17 +501,17 @@ void bpf_trampoline_put(struct bpf_trampoline *tr)
 	if (!refcount_dec_and_test(&tr->refcnt))
 		goto out;
 	WARN_ON_ONCE(mutex_is_locked(&tr->mutex));
+
 	for (i = 0; i < BPF_TRAMP_MAX; i++)
 		if (WARN_ON_ONCE(!hlist_empty(&tr->progs_hlist[i])))
 			goto out;
-	bpf_image_ksym_del(&tr->ksym);
-	/* This code will be executed when all bpf progs (both sleepable and
-	 * non-sleepable) went through
-	 * bpf_prog_put()->call_rcu[_tasks_trace]()->bpf_prog_free_deferred().
-	 * Hence no need for another synchronize_rcu_tasks_trace() here,
-	 * but synchronize_rcu_tasks() is still needed, since trampoline
-	 * may not have had any sleepable programs and we need to wait
-	 * for tasks to get out of trampoline code before freeing it.
+bpf_image_ksym_del(&tr->ksym);
+
+	/* This code will be executed even when the last bpf_tramp_image
+	 * is alive. All progs are detached from the trampoline and the
+	 * trampoline image is patched with jmp into epilogue to skip
+	 * fexit progs. The fentry-only trampoline will be freed via
+	 * multiple rcu callbacks.
 	 */
 	synchronize_rcu_tasks();
 	bpf_jit_free_exec(tr->image);
