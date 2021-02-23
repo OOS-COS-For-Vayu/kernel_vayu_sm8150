@@ -650,7 +650,6 @@ static int sk_psock_bpf_run(struct sk_psock *psock, struct bpf_prog *prog,
 	int ret;
 
 	skb->sk = psock->sk;
-	bpf_compute_data_end_sk_skb(skb);
 	preempt_disable();
 	ret = BPF_PROG_RUN(prog, skb);
 	preempt_enable();
