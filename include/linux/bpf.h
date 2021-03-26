@@ -40,6 +40,7 @@ struct bpf_iter_aux_info;
 struct bpf_local_storage;
 struct bpf_local_storage_map;
 struct kobject;
+struct module;
 
 extern struct idr btf_idr;
 extern spinlock_t btf_idr_lock;
@@ -614,6 +615,7 @@ struct bpf_trampoline {
 	void *image;
 	u64 selector;
 	struct bpf_ksym ksym;
+	struct module *mod;
 };
 
 struct bpf_attach_target_info {
