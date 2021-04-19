@@ -354,6 +354,21 @@ extern long strncpy_from_unsafe_strict(char *dst, const void *unsafe_addr,
 extern long __strncpy_from_unsafe(char *dst, const void *unsafe_addr, long count);
 long strncpy_from_user_nofault(char *dst, const void __user *unsafe_addr,
 		long count);
+
+/* 5.8 names for the strict kernel-address variants, used by backported BPF code */
+static inline long copy_from_kernel_nofault(void *dst, const void *src,
+					    size_t size)
+{
+	return probe_kernel_read_strict(dst, src, size);
+}
+
+static inline long strncpy_from_kernel_nofault(char *dst,
+					       const void *unsafe_addr,
+					       long count)
+{
+	return strncpy_from_unsafe_strict(dst, unsafe_addr, count);
+}
+
 extern long strnlen_unsafe_user(const void __user *unsafe_addr, long count);
 
 /**
