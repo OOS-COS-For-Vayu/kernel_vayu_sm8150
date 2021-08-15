@@ -620,25 +620,41 @@ struct sk_filter {
 
 DECLARE_STATIC_KEY_FALSE(bpf_stats_enabled_key);
 
-#define __BPF_PROG_RUN(prog, ctx, dfunc)	({			\
-	u32 ret;							\
-	cant_sleep();							\
-	if (static_branch_unlikely(&bpf_stats_enabled_key)) {		\
-		struct bpf_prog_stats *stats;				\
-		u64 start = sched_clock();				\
-		ret = dfunc(ctx, (prog)->insnsi, (prog)->bpf_func);	\
-		stats = this_cpu_ptr(prog->stats);			\
-		u64_stats_update_begin(&stats->syncp);			\
-		stats->cnt++;						\
-		stats->nsecs += sched_clock() - start;			\
-		u64_stats_update_end(&stats->syncp);			\
-	} else {							\
-		ret = dfunc(ctx, (prog)->insnsi, (prog)->bpf_func);	\
-	}								\
-	ret; })
+typedef unsigned int (*bpf_dispatcher_fn)(const void *ctx,
+					  const struct bpf_insn *insnsi,
+					  unsigned int (*bpf_func)(const void *,
+								   const struct bpf_insn *));
 
-#define BPF_PROG_RUN(prog, ctx)						\
-	__BPF_PROG_RUN(prog, ctx, bpf_dispatcher_nop_func)
+static __always_inline u32 __bpf_prog_run(const struct bpf_prog *prog,
+					  const void *ctx,
+					  bpf_dispatcher_fn dfunc)
+{
+	u32 ret;
+
+	cant_sleep();
+	if (static_branch_unlikely(&bpf_stats_enabled_key)) {
+		struct bpf_prog_stats *stats;
+		u64 start = sched_clock();
+
+		ret = dfunc(ctx, prog->insnsi, prog->bpf_func);
+		stats = this_cpu_ptr(prog->stats);
+		u64_stats_update_begin(&stats->syncp);
+		stats->cnt++;
+		stats->nsecs += sched_clock() - start;
+		u64_stats_update_end(&stats->syncp);
+	} else {
+		ret = dfunc(ctx, prog->insnsi, prog->bpf_func);
+	}
+	return ret;
+}
+
+static __always_inline u32 bpf_prog_run(const struct bpf_prog *prog, const void *ctx)
+{
+	return __bpf_prog_run(prog, ctx, bpf_dispatcher_nop_func);
+}
+
+/* 4.14-only callers still use the old macro name */
+#define BPF_PROG_RUN(prog, ctx)	bpf_prog_run(prog, ctx)
 
 /*
  * Use in preemptible and therefore migratable context to make sure that
@@ -657,7 +673,7 @@ static inline u32 bpf_prog_run_pin_on_cpu(const struct bpf_prog *prog,
 	u32 ret;
 
 	migrate_disable();
-	ret = __BPF_PROG_RUN(prog, ctx, bpf_dispatcher_nop_func);
+	ret = bpf_prog_run(prog, ctx);
 	migrate_enable();
 	return ret;
 }
@@ -762,7 +778,7 @@ static inline u32 __bpf_prog_run_save_cb(const struct bpf_prog *prog,
 		memset(cb_data, 0, sizeof(cb_saved));
 	}
 
-	res = BPF_PROG_RUN(prog, skb);
+	res = bpf_prog_run(prog, skb);
 
 	if (unlikely(prog->cb_access))
 		memcpy(cb_data, cb_saved, sizeof(cb_saved));
@@ -805,7 +821,7 @@ static __always_inline u32 bpf_prog_run_xdp(const struct bpf_prog *prog,
 	 * under local_bh_disable(), which provides the needed RCU protection
 	 * for accessing map entries.
 	 */
-	return __BPF_PROG_RUN(prog, xdp, BPF_DISPATCHER_FUNC(xdp));
+	return __bpf_prog_run(prog, xdp, BPF_DISPATCHER_FUNC(xdp));
 }
 
 void bpf_prog_change_xdp(struct bpf_prog *prev_prog, struct bpf_prog *prog);
@@ -1449,7 +1465,7 @@ static inline bool bpf_sk_lookup_run_v4(struct net *net, int protocol,
 		};
 		u32 act;
 
-		act = BPF_PROG_SK_LOOKUP_RUN_ARRAY(run_array, ctx, BPF_PROG_RUN);
+		act = BPF_PROG_SK_LOOKUP_RUN_ARRAY(run_array, ctx, bpf_prog_run);
 		if (act == SK_PASS) {
 			selected_sk = ctx.selected_sk;
 			no_reuseport = ctx.no_reuseport;
