@@ -1143,89 +1143,152 @@ struct bpf_run_ctx {};
 
 struct bpf_cg_run_ctx {
 	struct bpf_run_ctx run_ctx;
-	struct bpf_prog_array_item *prog_item;
+	const struct bpf_prog_array_item *prog_item;
 };
+
+static inline struct bpf_run_ctx *bpf_set_run_ctx(struct bpf_run_ctx *new_ctx)
+{
+	struct bpf_run_ctx *old_ctx = NULL;
+
+#ifdef CONFIG_BPF_SYSCALL
+	old_ctx = current->bpf_ctx;
+	current->bpf_ctx = new_ctx;
+#endif
+	return old_ctx;
+}
+
+static inline void bpf_reset_run_ctx(struct bpf_run_ctx *old_ctx)
+{
+#ifdef CONFIG_BPF_SYSCALL
+	current->bpf_ctx = old_ctx;
+#endif
+}
 
 /* BPF program asks to bypass CAP_NET_BIND_SERVICE in bind. */
 #define BPF_RET_BIND_NO_CAP_NET_BIND_SERVICE			(1 << 0)
 /* BPF program asks to set CN on the packet. */
 #define BPF_RET_SET_CN						(1 << 0)
 
-#define BPF_PROG_RUN_ARRAY_FLAGS(array, ctx, func, ret_flags)		\
-	({								\
-		__label__ _out_flags;					\
-		struct bpf_prog_array_item *_item;			\
-		struct bpf_prog *_prog;					\
-		struct bpf_prog_array *_array;				\
-		struct bpf_run_ctx *old_run_ctx;			\
-		struct bpf_cg_run_ctx run_ctx;				\
-		u32 _ret = 1;						\
-		u32 _cnt = 0;						\
-		u32 func_ret;						\
-		migrate_disable();					\
-		rcu_read_lock();					\
-		_array = rcu_dereference(array);			\
-		if (unlikely(!_array))					\
-			goto _out_flags;				\
-		_item = &_array->items[0];				\
-		old_run_ctx = bpf_set_run_ctx(&run_ctx.run_ctx);	\
-		while (_cnt < 64) {					\
-			if (unlikely(!_item || (unsigned long)_item < (unsigned long)_array || \
-			    (unsigned long)_item > (unsigned long)_array + PAGE_SIZE * 2)) \
-				break;			\
-			if (probe_kernel_read(&_prog, &_item->prog, sizeof(_prog))) \
-				break;			\
-			if (!_prog || (unsigned long)_prog < PAGE_SIZE || \
-			    ((unsigned long)_prog & 0xffff000000000000) == 0xdead000000000000) \
-				break;			\
-			run_ctx.prog_item = _item;			\
-			func_ret = func(_prog, ctx);			\
-			_ret &= (func_ret & 1);				\
-			*(ret_flags) |= (func_ret >> 1);		\
-			_item++;					\
-			_cnt++;						\
-		}							\
-		bpf_reset_run_ctx(old_run_ctx);				\
-_out_flags:								\
-		rcu_read_unlock();					\
-		migrate_enable();					\
-		_ret;							\
-	 })
+typedef u32 (*bpf_prog_run_fn)(const struct bpf_prog *prog, const void *ctx);
 
-#define __BPF_PROG_RUN_ARRAY(array, ctx, func, check_non_null, set_cg_storage) \
-	({						\
-		struct bpf_prog_array_item *_item;	\
-		struct bpf_prog *_prog;			\
-		struct bpf_prog_array *_array;		\
-		struct bpf_run_ctx *old_run_ctx;	\
-		struct bpf_cg_run_ctx run_ctx;		\
-		u32 _ret = 1;				\
-		migrate_disable();			\
-		rcu_read_lock();			\
-		_array = rcu_dereference(array);	\
-		if (unlikely(check_non_null && !_array))\
-			goto _out;			\
-		_item = &_array->items[0];		\
-		old_run_ctx = bpf_set_run_ctx(&run_ctx.run_ctx);\
-		while ((_prog = READ_ONCE(_item->prog))) {		\
-			if (!set_cg_storage) {			\
-				_ret &= func(_prog, ctx);	\
-			} else {				\
-				if (unlikely(bpf_cgroup_storage_set(_item->cgroup_storage)))	\
-					break;			\
-				_ret &= func(_prog, ctx);	\
-				bpf_cgroup_storage_unset();	\
-			}				\
-			run_ctx.prog_item = _item;	\
-			_ret &= func(_prog, ctx);	\
-			_item++;			\
-		}					\
-		bpf_reset_run_ctx(old_run_ctx);		\
-_out:							\
-		rcu_read_unlock();			\
-		migrate_enable();			\
-		_ret;					\
-	 })
+/*
+ * LazyExec: hardened prog-array walk. Reads each item's prog with
+ * probe_kernel_read, bounds the item pointer to the array, rejects bogus
+ * prog pointers and caps the walk at 64 entries; any failure ends the walk.
+ */
+static __always_inline const struct bpf_prog *
+bpf_prog_array_next_prog(const struct bpf_prog_array *array,
+			 const struct bpf_prog_array_item *item, u32 cnt)
+{
+	struct bpf_prog *prog;
+
+	if (cnt >= 64)
+		return NULL;
+	if (unlikely(!item || (unsigned long)item < (unsigned long)array ||
+		     (unsigned long)item > (unsigned long)array + PAGE_SIZE * 2))
+		return NULL;
+	if (probe_kernel_read(&prog, &item->prog, sizeof(prog)))
+		return NULL;
+	if (!prog || (unsigned long)prog < PAGE_SIZE ||
+	    ((unsigned long)prog & 0xffff000000000000) == 0xdead000000000000)
+		return NULL;
+	return prog;
+}
+
+static __always_inline u32
+BPF_PROG_RUN_ARRAY_CG_FLAGS(const struct bpf_prog_array __rcu *array_rcu,
+			    const void *ctx, bpf_prog_run_fn run_prog,
+			    u32 *ret_flags)
+{
+	const struct bpf_prog_array_item *item;
+	const struct bpf_prog *prog;
+	const struct bpf_prog_array *array;
+	struct bpf_run_ctx *old_run_ctx;
+	struct bpf_cg_run_ctx run_ctx;
+	u32 ret = 1;
+	u32 cnt = 0;
+	u32 func_ret;
+
+	migrate_disable();
+	rcu_read_lock();
+	array = rcu_dereference(array_rcu);
+	if (unlikely(!array))
+		goto out;
+	item = &array->items[0];
+	old_run_ctx = bpf_set_run_ctx(&run_ctx.run_ctx);
+	while ((prog = bpf_prog_array_next_prog(array, item, cnt))) {
+		run_ctx.prog_item = item;
+		func_ret = run_prog(prog, ctx);
+		ret &= (func_ret & 1);
+		*(ret_flags) |= (func_ret >> 1);
+		item++;
+		cnt++;
+	}
+	bpf_reset_run_ctx(old_run_ctx);
+out:
+	rcu_read_unlock();
+	migrate_enable();
+	return ret;
+}
+
+static __always_inline u32
+BPF_PROG_RUN_ARRAY_CG(const struct bpf_prog_array __rcu *array_rcu,
+		      const void *ctx, bpf_prog_run_fn run_prog)
+{
+	const struct bpf_prog_array_item *item;
+	const struct bpf_prog *prog;
+	const struct bpf_prog_array *array;
+	struct bpf_run_ctx *old_run_ctx;
+	struct bpf_cg_run_ctx run_ctx;
+	u32 ret = 1;
+	u32 cnt = 0;
+
+	migrate_disable();
+	rcu_read_lock();
+	array = rcu_dereference(array_rcu);
+	if (unlikely(!array))
+		goto out;
+	item = &array->items[0];
+	old_run_ctx = bpf_set_run_ctx(&run_ctx.run_ctx);
+	while ((prog = bpf_prog_array_next_prog(array, item, cnt))) {
+		run_ctx.prog_item = item;
+		ret &= run_prog(prog, ctx);
+		item++;
+		cnt++;
+	}
+	bpf_reset_run_ctx(old_run_ctx);
+out:
+	rcu_read_unlock();
+	migrate_enable();
+	return ret;
+}
+
+static __always_inline u32
+BPF_PROG_RUN_ARRAY(const struct bpf_prog_array __rcu *array_rcu,
+		   const void *ctx, bpf_prog_run_fn run_prog)
+{
+	const struct bpf_prog_array_item *item;
+	const struct bpf_prog *prog;
+	const struct bpf_prog_array *array;
+	u32 ret = 1;
+	u32 cnt = 0;
+
+	migrate_disable();
+	rcu_read_lock();
+	array = rcu_dereference(array_rcu);
+	if (unlikely(!array))
+		goto out;
+	item = &array->items[0];
+	while ((prog = bpf_prog_array_next_prog(array, item, cnt))) {
+		ret &= run_prog(prog, ctx);
+		item++;
+		cnt++;
+	}
+out:
+	rcu_read_unlock();
+	migrate_enable();
+	return ret;
+}
 
 /* To be used by __cgroup_bpf_run_filter_skb for EGRESS BPF progs
  * so BPF programs can request cwr for TCP packets.
@@ -1254,7 +1317,7 @@ _out:							\
 		u32 _flags = 0;				\
 		bool _cn;				\
 		u32 _ret;				\
-		_ret = BPF_PROG_RUN_ARRAY_FLAGS(array, ctx, func, &_flags); \
+		_ret = BPF_PROG_RUN_ARRAY_CG_FLAGS(array, ctx, func, &_flags); \
 		_cn = _flags & BPF_RET_SET_CN;		\
 		if (_ret)				\
 			_ret = (_cn ? NET_XMIT_CN : NET_XMIT_SUCCESS);	\
@@ -1262,12 +1325,6 @@ _out:							\
 			_ret = (_cn ? NET_XMIT_DROP : -EPERM);		\
 		_ret;					\
 	})
-
-#define BPF_PROG_RUN_ARRAY(array, ctx, func)		\
-	__BPF_PROG_RUN_ARRAY(array, ctx, func, false, true)
-
-#define BPF_PROG_RUN_ARRAY_CHECK(array, ctx, func)	\
-	__BPF_PROG_RUN_ARRAY(array, ctx, func, true, false)
 
 #ifdef CONFIG_BPF_SYSCALL
 DECLARE_PER_CPU(int, bpf_prog_active);
@@ -1301,20 +1358,6 @@ static inline void bpf_enable_instrumentation(void)
 	else
 		__this_cpu_dec(bpf_prog_active);
 	migrate_enable();
-}
-
-static inline struct bpf_run_ctx *bpf_set_run_ctx(struct bpf_run_ctx *new_ctx)
-{
-	struct bpf_run_ctx *old_ctx;
-
-	old_ctx = current->bpf_ctx;
-	current->bpf_ctx = new_ctx;
-	return old_ctx;
-}
-
-static inline void bpf_reset_run_ctx(struct bpf_run_ctx *old_ctx)
-{
-	current->bpf_ctx = old_ctx;
 }
 
 extern const struct file_operations bpf_map_fops;
