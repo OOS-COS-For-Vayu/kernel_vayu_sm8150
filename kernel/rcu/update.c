@@ -51,6 +51,7 @@
 #include <linux/kthread.h>
 #include <linux/tick.h>
 #include <linux/rcupdate_wait.h>
+#include <linux/kprobes.h>
 
 #define CREATE_TRACE_POINTS
 
@@ -163,8 +164,7 @@ static atomic_t rcu_expedited_nesting = ATOMIC_INIT(1);
  */
 bool rcu_gp_is_expedited(void)
 {
-	return rcu_expedited || atomic_read(&rcu_expedited_nesting) ||
-	       rcu_scheduler_active == RCU_SCHEDULER_INIT;
+	return rcu_expedited || atomic_read(&rcu_expedited_nesting);
 }
 EXPORT_SYMBOL_GPL(rcu_gp_is_expedited);
 
@@ -218,11 +218,7 @@ void rcu_test_sync_prims(void)
 	if (!IS_ENABLED(CONFIG_PROVE_RCU))
 		return;
 	synchronize_rcu();
-	synchronize_rcu_bh();
-	synchronize_sched();
 	synchronize_rcu_expedited();
-	synchronize_rcu_bh_expedited();
-	synchronize_sched_expedited();
 }
 
 #if !defined(CONFIG_TINY_RCU) || defined(CONFIG_SRCU)
@@ -240,54 +236,6 @@ static int __init rcu_set_runtime_mode(void)
 core_initcall(rcu_set_runtime_mode);
 
 #endif /* #if !defined(CONFIG_TINY_RCU) || defined(CONFIG_SRCU) */
-
-#ifdef CONFIG_PREEMPT_RCU
-
-/*
- * Preemptible RCU implementation for rcu_read_lock().
- * Just increment ->rcu_read_lock_nesting, shared state will be updated
- * if we block.
- */
-void __rcu_read_lock(void)
-{
-	current->rcu_read_lock_nesting++;
-	barrier();  /* critical section after entry code. */
-}
-EXPORT_SYMBOL_GPL(__rcu_read_lock);
-
-/*
- * Preemptible RCU implementation for rcu_read_unlock().
- * Decrement ->rcu_read_lock_nesting.  If the result is zero (outermost
- * rcu_read_unlock()) and ->rcu_read_unlock_special is non-zero, then
- * invoke rcu_read_unlock_special() to clean up after a context switch
- * in an RCU read-side critical section and other special cases.
- */
-void __rcu_read_unlock(void)
-{
-	struct task_struct *t = current;
-
-	if (t->rcu_read_lock_nesting != 1) {
-		--t->rcu_read_lock_nesting;
-	} else {
-		barrier();  /* critical section before exit code. */
-		t->rcu_read_lock_nesting = INT_MIN;
-		barrier();  /* assign before ->rcu_read_unlock_special load */
-		if (unlikely(READ_ONCE(t->rcu_read_unlock_special.s)))
-			rcu_read_unlock_special(t);
-		barrier();  /* ->rcu_read_unlock_special load before assign */
-		t->rcu_read_lock_nesting = 0;
-	}
-#ifdef CONFIG_PROVE_LOCKING
-	{
-		int rrln = READ_ONCE(t->rcu_read_lock_nesting);
-
-		WARN_ON_ONCE(rrln < 0 && rrln > INT_MIN / 2);
-	}
-#endif /* #ifdef CONFIG_PROVE_LOCKING */
-}
-EXPORT_SYMBOL_GPL(__rcu_read_unlock);
-
-#endif /* #ifdef CONFIG_PREEMPT_RCU */
 
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 static struct lock_class_key rcu_lock_key;
@@ -316,6 +264,7 @@ int notrace debug_lockdep_rcu_enabled(void)
 	       current->lockdep_recursion == 0;
 }
 EXPORT_SYMBOL_GPL(debug_lockdep_rcu_enabled);
+NOKPROBE_SYMBOL(debug_lockdep_rcu_enabled);
 
 /**
  * rcu_read_lock_held() - might we be in RCU read-side critical section?
@@ -359,7 +308,7 @@ EXPORT_SYMBOL_GPL(rcu_read_lock_held);
  *
  * Check debug_lockdep_rcu_enabled() to prevent false positives during boot.
  *
- * Note that rcu_read_lock() is disallowed if the CPU is either idle or
+ * Note that rcu_read_lock_bh() is disallowed if the CPU is either idle or
  * offline from an RCU perspective, so check for those as well.
  */
 int rcu_read_lock_bh_held(void)
@@ -409,11 +358,10 @@ void __wait_rcu_gp(bool checktiny, int n, call_rcu_func_t *crcu_array,
 	int i;
 	int j;
 
-	/* Initialize and register callbacks for each flavor specified. */
+	/* Initialize and register callbacks for each crcu_array element. */
 	for (i = 0; i < n; i++) {
 		if (checktiny &&
-		    (crcu_array[i] == call_rcu ||
-		     crcu_array[i] == call_rcu_bh)) {
+		    (crcu_array[i] == call_rcu)) {
 			might_sleep();
 			continue;
 		}
@@ -429,8 +377,7 @@ void __wait_rcu_gp(bool checktiny, int n, call_rcu_func_t *crcu_array,
 	/* Wait for all callbacks to be invoked. */
 	for (i = 0; i < n; i++) {
 		if (checktiny &&
-		    (crcu_array[i] == call_rcu ||
-		     crcu_array[i] == call_rcu_bh))
+		    (crcu_array[i] == call_rcu))
 			continue;
 		for (j = 0; j < i; j++)
 			if (crcu_array[j] == crcu_array[i])
@@ -513,81 +460,36 @@ EXPORT_SYMBOL_GPL(do_trace_rcu_torture_read);
 	do { } while (0)
 #endif
 
-#ifdef CONFIG_RCU_STALL_COMMON
+#if IS_ENABLED(CONFIG_RCU_TORTURE_TEST) || IS_MODULE(CONFIG_RCU_TORTURE_TEST)
+/* Get rcutorture access to sched_setaffinity(). */
+long rcutorture_sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
+{
+	int ret;
 
-#ifdef CONFIG_PROVE_RCU
-#define RCU_STALL_DELAY_DELTA	       (5 * HZ)
-#else
-#define RCU_STALL_DELAY_DELTA	       0
+	ret = sched_setaffinity(pid, in_mask);
+	WARN_ONCE(ret, "%s: sched_setaffinity() returned %d\n", __func__, ret);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(rcutorture_sched_setaffinity);
 #endif
 
+#ifdef CONFIG_RCU_STALL_COMMON
+int rcu_cpu_stall_ftrace_dump __read_mostly;
+module_param(rcu_cpu_stall_ftrace_dump, int, 0644);
 int rcu_cpu_stall_suppress __read_mostly; /* 1 = suppress stall warnings. */
-static int rcu_cpu_stall_timeout __read_mostly = CONFIG_RCU_CPU_STALL_TIMEOUT;
-
+EXPORT_SYMBOL_GPL(rcu_cpu_stall_suppress);
 module_param(rcu_cpu_stall_suppress, int, 0644);
+int rcu_cpu_stall_timeout __read_mostly = CONFIG_RCU_CPU_STALL_TIMEOUT;
 module_param(rcu_cpu_stall_timeout, int, 0644);
-
-int rcu_jiffies_till_stall_check(void)
-{
-	int till_stall_check = READ_ONCE(rcu_cpu_stall_timeout);
-
-	/*
-	 * Limit check must be consistent with the Kconfig limits
-	 * for CONFIG_RCU_CPU_STALL_TIMEOUT.
-	 */
-	if (till_stall_check < 3) {
-		WRITE_ONCE(rcu_cpu_stall_timeout, 3);
-		till_stall_check = 3;
-	} else if (till_stall_check > 300) {
-		WRITE_ONCE(rcu_cpu_stall_timeout, 300);
-		till_stall_check = 300;
-	}
-	return till_stall_check * HZ + RCU_STALL_DELAY_DELTA;
-}
-
-void rcu_sysrq_start(void)
-{
-	if (!rcu_cpu_stall_suppress)
-		rcu_cpu_stall_suppress = 2;
-}
-
-void rcu_sysrq_end(void)
-{
-	if (rcu_cpu_stall_suppress == 2)
-		rcu_cpu_stall_suppress = 0;
-}
-
-static int rcu_panic(struct notifier_block *this, unsigned long ev, void *ptr)
-{
-	rcu_cpu_stall_suppress = 1;
-	return NOTIFY_DONE;
-}
-
-static struct notifier_block rcu_panic_block = {
-	.notifier_call = rcu_panic,
-};
-
-static int __init check_cpu_stall_init(void)
-{
-	atomic_notifier_chain_register(&panic_notifier_list, &rcu_panic_block);
-	return 0;
-}
-early_initcall(check_cpu_stall_init);
-
 #endif /* #ifdef CONFIG_RCU_STALL_COMMON */
 
 #ifdef CONFIG_PROVE_RCU
 
 /*
- * Early boot self test parameters, one for each flavor
+ * Early boot self test parameters.
  */
 static bool rcu_self_test;
-static bool rcu_self_test_bh;
-static bool rcu_self_test_sched;
-
 module_param(rcu_self_test, bool, 0444);
-module_param(rcu_self_test_bh, bool, 0444);
-module_param(rcu_self_test_sched, bool, 0444);
 
 static int rcu_self_test_counter;
 
@@ -597,25 +499,16 @@ static void test_callback(struct rcu_head *r)
 	pr_info("RCU test callback executed %d\n", rcu_self_test_counter);
 }
 
+DEFINE_STATIC_SRCU(early_srcu);
+
 static void early_boot_test_call_rcu(void)
 {
 	static struct rcu_head head;
+	static struct rcu_head shead;
 
 	call_rcu(&head, test_callback);
-}
-
-static void early_boot_test_call_rcu_bh(void)
-{
-	static struct rcu_head head;
-
-	call_rcu_bh(&head, test_callback);
-}
-
-static void early_boot_test_call_rcu_sched(void)
-{
-	static struct rcu_head head;
-
-	call_rcu_sched(&head, test_callback);
+	if (IS_ENABLED(CONFIG_SRCU))
+		call_srcu(&early_srcu, &shead, test_callback);
 }
 
 void rcu_early_boot_tests(void)
@@ -624,10 +517,6 @@ void rcu_early_boot_tests(void)
 
 	if (rcu_self_test)
 		early_boot_test_call_rcu();
-	if (rcu_self_test_bh)
-		early_boot_test_call_rcu_bh();
-	if (rcu_self_test_sched)
-		early_boot_test_call_rcu_sched();
 	rcu_test_sync_prims();
 }
 
@@ -639,16 +528,11 @@ static int rcu_verify_early_boot_tests(void)
 	if (rcu_self_test) {
 		early_boot_test_counter++;
 		rcu_barrier();
+		if (IS_ENABLED(CONFIG_SRCU)) {
+			early_boot_test_counter++;
+			srcu_barrier(&early_srcu);
+		}
 	}
-	if (rcu_self_test_bh) {
-		early_boot_test_counter++;
-		rcu_barrier_bh();
-	}
-	if (rcu_self_test_sched) {
-		early_boot_test_counter++;
-		rcu_barrier_sched();
-	}
-
 	if (rcu_self_test_counter != early_boot_test_counter) {
 		WARN_ON(1);
 		ret = -1;
