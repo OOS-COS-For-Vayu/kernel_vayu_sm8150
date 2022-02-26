@@ -819,10 +819,8 @@ config PROCESS_RECLAIM
 	 (addr, addr + size-bytes) of the process.
 
 	 Any other value is ignored.
-
-config ARCH_HAS_PTE_SPECIAL
-	bool
-
+	 
+# multi-gen LRU {
 config LRU_GEN
 	bool "Multi-Gen LRU"
 	depends on MMU
@@ -831,7 +829,15 @@ config LRU_GEN
 	help
 	  A high performance LRU implementation to overcommit memory.
 
-endmenu
+config LRU_GEN_STATS
+	bool "Full stats for debugging"
+	depends on LRU_GEN
+	help
+	  Do not enable this option unless you plan to look at historical stats
+	  from evicted generations for debugging purpose.
+
+	  This option has a per-memcg and per-node memory overhead.
+# }
 
 config FORCE_ALLOC_FROM_DMA_ZONE
 	bool "Force certain memory allocators to always return ZONE_DMA memory"
