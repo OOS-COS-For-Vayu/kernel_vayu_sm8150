@@ -552,9 +552,9 @@ int smblib_change_psns_to_curr(struct smb_charger *chg, int uv)
 #define MICRO_1PA				1000000
 #define MICRO_3PA				3000000
 #ifdef CONFIG_MACH_XIAOMI_NABU
-#define MICRO_1P8A_FOR_DCP		2000000
+#define MICRO_1P8A_FOR_DCP		2200000
 #elif defined(CONFIG_MACH_XIAOMI_SM8150)
-#define MICRO_1P8A_FOR_DCP		1800000
+#define MICRO_1P8A_FOR_DCP		2200000
 #endif
 #define MICRO_4PA				4000000
 #define OTG_DEFAULT_DEGLITCH_TIME_MS		50
