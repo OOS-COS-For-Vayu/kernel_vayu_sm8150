@@ -42,6 +42,8 @@
 
 #define FPC1020_NAME "fpc1020"
 
+#define FPC1020_NAME "fpc1020"
+
 #define FPC_SCREEN_HOLD_TIME 2000
 #define FPC_TTW_HOLD_TIME 2000
 
