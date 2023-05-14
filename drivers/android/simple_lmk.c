@@ -359,13 +359,6 @@ static struct mm_struct *next_reap_victim(void)
 			continue;
 		}
 
-		/* Skip any mm with notifiers for now since they can sleep */
-		if (mm_has_notifiers(mm)) {
-			up_read(&mm->mmap_sem);
-			should_retry = true;
-			continue;
-		}
-
 		/*
 		 * Check MMF_OOM_SKIP again under the lock in case this mm was
 		 * reaped by exit_mmap() and then had its page tables destroyed.
@@ -409,12 +402,13 @@ static void reap_victims(void)
 		}
 
 		/*
-		 * Reap the victim, then unflag the mm for exit_mmap() reaping
-		 * and mark it as reaped with MMF_OOM_SKIP.
+		 * Try to reap the victim. Unflag the mm for exit_mmap() reaping
+		 * and mark it as reaped with MMF_OOM_SKIP if successful.
 		 */
-		__oom_reap_task_mm(mm);
-		clear_bit(MMF_OOM_VICTIM, &mm->flags);
-		set_bit(MMF_OOM_SKIP, &mm->flags);
+		if (__oom_reap_task_mm(mm)) {
+			clear_bit(MMF_OOM_VICTIM, &mm->flags);
+			set_bit(MMF_OOM_SKIP, &mm->flags);
+		}
 		up_read(&mm->mmap_sem);
 	}
 }
