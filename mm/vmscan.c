@@ -3656,16 +3656,17 @@ done:
 	return -EAGAIN;
 }
 
-static const struct mm_walk_ops lru_gen_mm_walk_ops = {
-	.test_walk = should_skip_vma,
-	.p4d_entry = walk_pud_range,
-};
-
 static void walk_mm(struct lruvec *lruvec, struct mm_struct *mm, struct lru_gen_mm_walk *walk)
 {
 	int err;
 	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
 	struct pglist_data *pgdat = lruvec_pgdat(lruvec);
+	struct mm_walk args = {
+		.mm = mm,
+		.private = walk,
+		.test_walk = should_skip_vma,
+		.p4d_entry = walk_pud_range,
+	};
 
 	walk->next_addr = FIRST_USER_ADDRESS;
 
@@ -3684,8 +3685,7 @@ static void walk_mm(struct lruvec *lruvec, struct mm_struct *mm, struct lru_gen_
 
 		/* the caller might be holding the lock for write */
 		if (down_read_trylock(&mm->mmap_sem)) {
-			err = walk_page_range(mm, walk->next_addr, ULONG_MAX,
-					      &lru_gen_mm_walk_ops, walk);
+			err = walk_page_range(walk->next_addr, ULONG_MAX, &args);
 
 			up_read(&mm->mmap_sem);
 		}
@@ -3990,15 +3990,8 @@ static bool age_lruvec(struct lruvec *lruvec, struct scan_control *sc,
 	bool need_aging;
 	long nr_to_scan;
 	int swappiness = get_swappiness(lruvec, sc);
-	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
-	enum mem_cgroup_protection prot = mem_cgroup_protected(NULL, memcg);
 	DEFINE_MAX_SEQ(lruvec);
 	DEFINE_MIN_SEQ(lruvec);
-
-	VM_WARN_ON_ONCE(sc->memcg_low_reclaim);
-
-	if (prot == MEMCG_PROT_MIN)
-		return false;
 
 	need_aging = should_run_aging(lruvec, max_seq, min_seq, sc, swappiness,
 				     &nr_to_scan);
@@ -4096,8 +4089,9 @@ void lru_gen_look_around(struct page_vma_mapped_walk *pvmw)
 	struct lru_gen_mm_walk *walk;
 	int young = 0;
 	unsigned long bitmap[BITS_TO_LONGS(MIN_LRU_BATCH)] = {};
-	struct mem_cgroup *memcg = page_memcg(pvmw->page);
-	struct pglist_data *pgdat = page_pgdat(pvmw->page);
+	bool can_swap = !page_is_file_cache(page);
+	struct mem_cgroup *memcg = page_memcg(page);
+	struct pglist_data *pgdat = page_pgdat(page);
 	struct lruvec *lruvec = mem_cgroup_lruvec(pgdat, memcg);
 	DEFINE_MAX_SEQ(lruvec);
 	int old_gen, new_gen = lru_gen_from_seq(max_seq);
@@ -4140,7 +4134,7 @@ void lru_gen_look_around(struct page_vma_mapped_walk *pvmw)
 		if (!pte_young(pte[i]))
 			continue;
 
-		page = get_pfn_page(pfn, memcg, pgdat, !walk || walk->can_swap);
+		page = get_pfn_page(pfn, memcg, pgdat, can_swap);
 		if (!page)
 			continue;
 
@@ -4554,7 +4548,7 @@ retry:
 
 	spin_unlock_irq(&pgdat->lru_lock);
 	mem_cgroup_uncharge_list(&list);
-	free_unref_page_list(&list);
+	free_hot_cold_page_list(&list, true);
 
 	INIT_LIST_HEAD(&list);
 	list_splice_init(&clean, &list);
@@ -5049,7 +5043,8 @@ static void lru_gen_seq_show_full(struct seq_file *m, struct lruvec *lruvec,
 static int lru_gen_seq_show(struct seq_file *m, void *v)
 {
 	unsigned long seq;
-	bool full = !debugfs_real_fops(m->file)->write;
+	/* the read-only lru_gen_full file dumps all the generations */
+	bool full = !m->file->f_op->write;
 	struct lruvec *lruvec = v;
 	struct lru_gen_struct *lrugen = &lruvec->lrugen;
 	int nid = lruvec_pgdat(lruvec)->node_id;
