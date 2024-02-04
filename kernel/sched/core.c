@@ -3347,9 +3347,11 @@ void scheduler_tick(void)
 	if (update_preferred_cluster(grp, curr, old_load))
 		set_preferred_cluster(grp);
 	rcu_read_unlock();
-
+	
+#ifdef CONFIG_SCHED_WALT
 	if (curr->sched_class == &fair_sched_class)
 		check_for_migration(rq, curr);
+#endif /* bye walt */
 
 #ifdef CONFIG_SMP
 	rq_lock(rq, &rf);
