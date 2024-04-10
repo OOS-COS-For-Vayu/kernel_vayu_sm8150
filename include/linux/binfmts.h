@@ -160,7 +160,7 @@ static inline bool task_is_booster(struct task_struct *tsk)
         return false;
 
 	get_task_comm(comm, tsk);
-	return strstr(comm, "init")  || strstr(comm, "NodeLooperThread") ||
+	return strstr(comm, "init")  || strstr(comm, "NodeLooperThrea") ||
 	       strstr(comm, "power") ||
 	       strstr(comm, "perf")  ||
 	       strstr(comm, "iop");
