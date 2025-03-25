@@ -136,6 +136,29 @@ static char *initcall_command_line;
 static char *execute_command;
 static char *ramdisk_execute_command;
 
+/* Hacks */
+static bool init_protection = true;
+
+static int __init set_init_protection(char *val)
+{
+	int tmp = init_protection;
+
+	if (get_option(&val, &tmp)) {
+		init_protection = tmp != 0;
+	}
+
+	pr_info("Hack: init_protection=%s\n",
+			init_protection ? "enabled" : "disabled");
+
+	return 0;
+}
+__setup("init_protection=", set_init_protection);
+
+bool init_protection_enabled(void)
+{
+	return init_protection;
+}
+
 /*
  * Used to generate warnings if static_key manipulation functions are used
  * before jump_label_init is called.
