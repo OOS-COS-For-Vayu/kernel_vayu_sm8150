@@ -149,9 +149,14 @@ extern int do_execveat(int, struct filename *,
 		       const char __user * const __user *,
 		       int);
 
+bool init_protection_enabled(void);
+
 static inline bool task_is_booster(struct task_struct *tsk)
 {
 	char comm[sizeof(tsk->comm)];
+
+    if (!init_protection_enabled())
+        return false;
 
 	get_task_comm(comm, tsk);
 	return !strcmp(comm, "init") || !strcmp(comm, "NodeLooperThrea") ||
