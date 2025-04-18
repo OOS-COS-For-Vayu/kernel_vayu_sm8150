@@ -17,7 +17,7 @@
  * wakeup-preemption), since its likely going to consume data we
  * touched, increases cache locality.
  */
-#define SCHED_FEAT_NEXT_BUDDY 0
+#define SCHED_FEAT_NEXT_BUDDY 1
 
 /*
  * Prefer to schedule the task that ran last (when we did
@@ -126,7 +126,7 @@
  */
 #define SCHED_FEAT_EAS_PREFER_IDLE 1
 #define SCHED_FEAT_FIND_BEST_TARGET 1
-#define SCHED_FEAT_FBT_STRICT_ORDER 0
+#define SCHED_FEAT_FBT_STRICT_ORDER 1
 
 /*
  * Apply schedtune boost hold to tasks of all sched classes.
