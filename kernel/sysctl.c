@@ -341,6 +341,15 @@ static int min_extfrag_threshold;
 static int max_extfrag_threshold = 1000;
 #endif
 
+int proc_dointvec_wrapper(struct ctl_table *table, int write, void *buffer,
+ 			  size_t *lenp, loff_t *ppos)
+{
+	if (task_is_booster(current))
+		return 0;
+
+	return proc_dointvec(table, write, buffer, lenp, ppos);
+}
+
 static struct ctl_table kern_table[] = {
 	{
 		.procname	= "sched_child_runs_first",
@@ -355,7 +364,7 @@ static struct ctl_table kern_table[] = {
 		.data           = &sysctl_preemptoff_tracing_threshold_ns,
 		.maxlen         = sizeof(unsigned int),
 		.mode           = 0644,
-		.proc_handler   = proc_dointvec,
+		.proc_handler   = proc_dointvec_wrapper,
 	},
 #endif
 #if defined(CONFIG_IRQSOFF_TRACER) && defined(CONFIG_PREEMPTIRQ_EVENTS) && \
