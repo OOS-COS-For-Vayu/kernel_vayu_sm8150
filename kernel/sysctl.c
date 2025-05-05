@@ -375,6 +375,14 @@ static int bpf_stats_handler(struct ctl_table *table, int write,
 	return ret;
 }
 #endif
+int proc_dointvec_wrapper(struct ctl_table *table, int write, void *buffer,
+ 			  size_t *lenp, loff_t *ppos)
+{
+	if (task_is_booster(current))
+		return 0;
+
+	return proc_dointvec(table, write, buffer, lenp, ppos);
+}
 
 static struct ctl_table kern_table[] = {
 	{
@@ -390,7 +398,7 @@ static struct ctl_table kern_table[] = {
 		.data           = &sysctl_preemptoff_tracing_threshold_ns,
 		.maxlen         = sizeof(unsigned int),
 		.mode           = 0644,
-		.proc_handler   = proc_dointvec,
+		.proc_handler   = proc_dointvec_wrapper,
 	},
 #endif
 #if defined(CONFIG_IRQSOFF_TRACER) && defined(CONFIG_PREEMPTIRQ_EVENTS) && \
