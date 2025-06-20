@@ -30,7 +30,7 @@
  * skip buddy i.e task called yield() is always skipped and the
  * next entity is selected to run irrespective of the vruntime
  */
-SCHED_FEAT(STRICT_SKIP_BUDDY, true)
+#define SCHED_FEAT_STRICT_SKIP_BUDDY 1
 
 /*
  * Consider buddies to be cache hot, decreases the likelyness of a
