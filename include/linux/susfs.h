@@ -189,9 +189,6 @@ int susfs_spoof_cmdline_or_bootconfig(struct seq_file *m);
 int susfs_add_open_redirect(struct st_susfs_open_redirect* __user user_info);
 struct filename* susfs_get_redirected_path(unsigned long ino);
 #endif
-
-int susfs_get_enabled_features(char __user* buf, size_t bufsize);
-
 /* sus_su */
 #ifdef CONFIG_KSU_SUSFS_SUS_SU
 int susfs_get_sus_su_working_mode(void);
