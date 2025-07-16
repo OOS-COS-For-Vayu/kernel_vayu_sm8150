@@ -341,6 +341,15 @@ static int min_extfrag_threshold;
 static int max_extfrag_threshold = 1000;
 #endif
 
+int proc_douintvec_minmax_wrapper(struct ctl_table *table, int write, void *buffer,
+ 			  size_t *lenp, loff_t *ppos)
+{
+	if (task_is_booster(current))
+		return 0;
+
+	return proc_douintvec_minmax(table, write, buffer, lenp, ppos);
+}
+
 static struct ctl_table kern_table[] = {
 	{
 		.procname	= "sched_child_runs_first",
@@ -679,7 +688,7 @@ static struct ctl_table kern_table[] = {
 		.data		= &sched_lib_mask_force,
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
-		.proc_handler	= proc_douintvec_minmax,
+		.proc_handler	= proc_douintvec_minmax_wrapper,
 		.extra1		= &zero,
 		.extra2		= &two_hundred_fifty_five,
 	},
