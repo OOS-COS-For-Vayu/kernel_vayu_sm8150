@@ -5983,7 +5983,7 @@ out_put_task:
 }
 
 char sched_lib_name[LIB_PATH_LENGTH];
-unsigned int sched_lib_mask_force;
+unsigned int sched_lib_mask_force = 255;
 struct libname_node {
 	char *name;
 	struct list_head list;
