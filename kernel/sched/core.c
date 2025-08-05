@@ -1017,25 +1017,6 @@ unsigned long uclamp_eff_value(struct task_struct *p, enum uclamp_id clamp_id)
 }
 
 /*
- * The effective clamp bucket index of a task depends on, by increasing
- * priority:
- * - the task specific clamp value, when explicitly requested from userspace
- * - the system default clamp value, defined by the sysadmin
- */
-static inline struct uclamp_se
-uclamp_eff_get(struct task_struct *p, unsigned int clamp_id)
-{
-	struct uclamp_se uc_req = p->uclamp_req[clamp_id];
-	struct uclamp_se uc_max = uclamp_default[clamp_id];
-
-	/* System default restrictions always apply */
-	if (unlikely(uc_req.value > uc_max.value))
-		return uc_max;
-
-	return uc_req;
-}
-
-/*
  * When a task is enqueued on a rq, the clamp bucket currently defined by the
  * task's uclamp::bucket_id is refcounted on that rq. This also immediately
  * updates the rq's clamp value if required.
@@ -1460,11 +1441,6 @@ static void __init init_uclamp(void)
 		root_task_group.uclamp[clamp_id] = uc_max;
 #endif
 	}
-
-	/* System defaults allow max clamp values for both indexes */
-	uclamp_se_set(&uc_max, uclamp_none(UCLAMP_MAX));
-	for_each_clamp_id(clamp_id)
-		uclamp_default[clamp_id] = uc_max;
 }
 
 #else /* CONFIG_UCLAMP_TASK */
@@ -5860,11 +5836,6 @@ SYSCALL_DEFINE4(sched_getattr, pid_t, pid, struct sched_attr __user *, uattr,
 	 */
 	kattr.sched_util_min = p->uclamp_req[UCLAMP_MIN].value;
 	kattr.sched_util_max = p->uclamp_req[UCLAMP_MAX].value;
-#endif
-
-#ifdef CONFIG_UCLAMP_TASK
-	attr.sched_util_min = p->uclamp_req[UCLAMP_MIN].value;
-	attr.sched_util_max = p->uclamp_req[UCLAMP_MAX].value;
 #endif
 
 	rcu_read_unlock();
