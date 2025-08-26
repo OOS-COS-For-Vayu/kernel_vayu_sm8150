@@ -19,9 +19,7 @@
 #include "kgsl_device.h"
 
 int adreno_getproperty_compat(struct kgsl_device *device,
-			unsigned int type,
-			void __user *value,
-			size_t sizebytes);
+		struct kgsl_device_getproperty *param);
 
 int adreno_setproperty_compat(struct kgsl_device_private *dev_priv,
 				unsigned int type,

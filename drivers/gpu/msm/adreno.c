@@ -2547,396 +2547,244 @@ int adreno_reset(struct kgsl_device *device, int fault)
 	return ret;
 }
 
-static int adreno_getproperty(struct kgsl_device *device,
-				unsigned int type,
-				void __user *value,
-				size_t sizebytes)
+static int copy_prop(struct kgsl_device_getproperty *param,
+		void *src, size_t size)
 {
-	int status = -EINVAL;
+	if (copy_to_user(param->value, src,
+		min_t(u32, size, param->sizebytes)))
+		return -EFAULT;
+
+	return 0;
+}
+
+
+static int adreno_prop_device_info(struct kgsl_device *device,
+		struct kgsl_device_getproperty *param)
+{
+	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
+	struct kgsl_devinfo devinfo = {
+		.device_id = device->id + 1,
+		.chip_id = adreno_dev->chipid,
+		.mmu_enabled = MMU_FEATURE(&device->mmu, KGSL_MMU_PAGED),
+		.gmem_gpubaseaddr = 0,
+		.gmem_sizebytes = adreno_dev->gpucore->gmem_size,
+	};
+
+	return copy_prop(param, &devinfo, sizeof(devinfo));
+}
+
+static int adreno_prop_gpu_model(struct kgsl_device *device,
+		struct kgsl_device_getproperty *param)
+{
+	struct kgsl_gpu_model model = {0};
+
+	strlcpy(model.gpu_model, adreno_get_gpu_model(device),
+			sizeof(model.gpu_model));
+
+	return copy_prop(param, &model, sizeof(model));
+}
+
+static int adreno_prop_device_shadow(struct kgsl_device *device,
+		struct kgsl_device_getproperty *param)
+{
+	struct kgsl_shadowprop shadowprop = { 0 };
+
+	if (device->memstore.hostptr) {
+		/*
+		 * NOTE: with mmu enabled, gpuaddr doesn't mean
+		 * anything to mmap().
+		 */
+
+		shadowprop.gpuaddr =  (unsigned long)device->memstore.gpuaddr;
+		shadowprop.size = device->memstore.size;
+
+		shadowprop.flags = KGSL_FLAGS_INITIALIZED |
+			KGSL_FLAGS_PER_CONTEXT_TIMESTAMPS;
+	}
+
+	return copy_prop(param, &shadowprop, sizeof(shadowprop));
+}
+
+static int adreno_prop_device_qdss_stm(struct kgsl_device *device,
+		struct kgsl_device_getproperty *param)
+{
+	struct kgsl_qdss_stm_prop qdssprop = {0};
+	struct kgsl_memdesc *qdss_desc = kgsl_mmu_get_qdss_global_entry(device);
+
+	if (qdss_desc) {
+		qdssprop.gpuaddr = qdss_desc->gpuaddr;
+		qdssprop.size = qdss_desc->size;
+	}
+
+	return copy_prop(param, &qdssprop, sizeof(qdssprop));
+}
+
+static int adreno_prop_device_qtimer(struct kgsl_device *device,
+		struct kgsl_device_getproperty *param)
+{
+	struct kgsl_qtimer_prop qtimerprop = {0};
+	struct kgsl_memdesc *qtimer_desc =
+		kgsl_mmu_get_qtimer_global_entry(device);
+
+	if (qtimer_desc) {
+		qtimerprop.gpuaddr = qtimer_desc->gpuaddr;
+		qtimerprop.size = qtimer_desc->size;
+	}
+
+	return copy_prop(param, &qtimerprop, sizeof(qtimerprop));
+}
+
+static int adreno_prop_s32(struct kgsl_device *device,
+		struct kgsl_device_getproperty *param)
+{
+	int val = 0;
+
+	if (param->type == KGSL_PROP_MMU_ENABLE)
+		val = MMU_FEATURE(&device->mmu, KGSL_MMU_PAGED);
+	else if (param->type == KGSL_PROP_INTERRUPT_WAITS)
+		val = 1;
+
+	return copy_prop(param, &val, sizeof(val));
+}
+
+static int adreno_prop_uche_gmem_addr(struct kgsl_device *device,
+		struct kgsl_device_getproperty *param)
+{
 	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 
-	switch (type) {
-	case KGSL_PROP_DEVICE_INFO:
-		{
-			struct kgsl_devinfo devinfo;
+	return copy_prop(param, &adreno_dev->uche_gmem_base,
+		sizeof(adreno_dev->uche_gmem_base));
+}
 
-			if (sizebytes != sizeof(devinfo)) {
-				status = -EINVAL;
-				break;
-			}
+static int adreno_prop_sp_generic_mem(struct kgsl_device *device,
+		struct kgsl_device_getproperty *param)
+{
+	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
+	struct kgsl_sp_generic_mem sp_mem = {
+		.local = adreno_dev->sp_local_gpuaddr,
+		.pvt = adreno_dev->sp_pvt_gpuaddr,
+	};
 
-			memset(&devinfo, 0, sizeof(devinfo));
-			devinfo.device_id = device->id+1;
-			devinfo.chip_id = adreno_dev->chipid;
-			devinfo.mmu_enabled =
-				MMU_FEATURE(&device->mmu, KGSL_MMU_PAGED);
-			devinfo.gmem_gpubaseaddr = adreno_dev->gmem_base;
-			devinfo.gmem_sizebytes = adreno_dev->gmem_size;
+	return copy_prop(param, &sp_mem, sizeof(sp_mem));
+}
 
-			if (copy_to_user(value, &devinfo, sizeof(devinfo)) !=
-					0) {
-				status = -EFAULT;
-				break;
-			}
-			status = 0;
-		}
-		break;
-	case KGSL_PROP_DEVICE_SHADOW:
-		{
-			struct kgsl_shadowprop shadowprop;
+static int adreno_prop_ucode_version(struct kgsl_device *device,
+		struct kgsl_device_getproperty *param)
+{
+	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
+	struct kgsl_ucode_version ucode = {
+		.pfp = adreno_dev->fw[ADRENO_FW_PFP].version,
+		.pm4 = adreno_dev->fw[ADRENO_FW_PM4].version,
+	};
 
-			if (sizebytes != sizeof(shadowprop)) {
-				status = -EINVAL;
-				break;
-			}
-			memset(&shadowprop, 0, sizeof(shadowprop));
-			if (device->memstore.hostptr) {
-				/*NOTE: with mmu enabled, gpuaddr doesn't mean
-				 * anything to mmap().
-				 */
-				shadowprop.gpuaddr =
-					(unsigned long)device->memstore.gpuaddr;
-				shadowprop.size = device->memstore.size;
-				/* GSL needs this to be set, even if it
-				 * appears to be meaningless
-				 */
-				shadowprop.flags = KGSL_FLAGS_INITIALIZED |
-					KGSL_FLAGS_PER_CONTEXT_TIMESTAMPS;
-			}
-			if (copy_to_user(value, &shadowprop,
-				sizeof(shadowprop))) {
-				status = -EFAULT;
-				break;
-			}
-			status = 0;
-		}
-		break;
-	case KGSL_PROP_DEVICE_QDSS_STM:
-		{
-			struct kgsl_qdss_stm_prop qdssprop = {0};
-			struct kgsl_memdesc *qdss_desc =
-				kgsl_mmu_get_qdss_global_entry(device);
+	return copy_prop(param, &ucode, sizeof(ucode));
+}
 
-			if (sizebytes != sizeof(qdssprop)) {
-				status = -EINVAL;
-				break;
-			}
+static int adreno_prop_gpmu_version(struct kgsl_device *device,
+		struct kgsl_device_getproperty *param)
+{
+	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
+	struct kgsl_gpmu_version gpmu = {
+		.major = adreno_dev->gpucore->gpmu_major,
+		.minor = adreno_dev->gpucore->gpmu_minor,
+		.features = adreno_dev->gpucore->gpmu_features,
+	};
 
-			if (qdss_desc) {
-				qdssprop.gpuaddr = qdss_desc->gpuaddr;
-				qdssprop.size = qdss_desc->size;
-			}
+	if (!adreno_dev->gpucore)
+		return -EINVAL;
 
-			if (copy_to_user(value, &qdssprop,
-						sizeof(qdssprop))) {
-				status = -EFAULT;
-				break;
-			}
-			status = 0;
-		}
-		break;
-	case KGSL_PROP_DEVICE_QTIMER:
-		{
-			struct kgsl_qtimer_prop qtimerprop = {0};
-			struct kgsl_memdesc *qtimer_desc =
-				kgsl_mmu_get_qtimer_global_entry(device);
+	if (!ADRENO_FEATURE(adreno_dev, ADRENO_GPMU))
+		return -EOPNOTSUPP;
 
-			if (sizebytes != sizeof(qtimerprop)) {
-				status = -EINVAL;
-				break;
-			}
+	return copy_prop(param, &gpmu, sizeof(gpmu));
+}
 
-			if (qtimer_desc) {
-				qtimerprop.gpuaddr = qtimer_desc->gpuaddr;
-				qtimerprop.size = qtimer_desc->size;
-			}
+static int adreno_prop_gaming_bin(struct kgsl_device *device,
+		struct kgsl_device_getproperty *param)
+{
+	void *buf;
+	size_t len;
+	int ret;
+	struct nvmem_cell *cell;
 
-			if (copy_to_user(value, &qtimerprop,
-						sizeof(qtimerprop))) {
-				status = -EFAULT;
-				break;
-			}
-			status = 0;
-		}
-		break;
-	case KGSL_PROP_MMU_ENABLE:
-		{
-			/* Report MMU only if we can handle paged memory */
-			int mmu_prop = MMU_FEATURE(&device->mmu,
-				KGSL_MMU_PAGED);
+	cell = nvmem_cell_get(&device->pdev->dev, "gaming_bin");
+	if (IS_ERR(cell))
+		return -EINVAL;
 
-			if (sizebytes < sizeof(mmu_prop)) {
-				status = -EINVAL;
-				break;
-			}
-			if (copy_to_user(value, &mmu_prop, sizeof(mmu_prop))) {
-				status = -EFAULT;
-				break;
-			}
-			status = 0;
-		}
-		break;
-	case KGSL_PROP_INTERRUPT_WAITS:
-		{
-			int int_waits = 1;
+	buf = nvmem_cell_read(cell, &len);
+	nvmem_cell_put(cell);
 
-			if (sizebytes != sizeof(int)) {
-				status = -EINVAL;
-				break;
-			}
-			if (copy_to_user(value, &int_waits, sizeof(int))) {
-				status = -EFAULT;
-				break;
-			}
-			status = 0;
-		}
-		break;
-	case KGSL_PROP_UCHE_GMEM_VADDR:
-		{
-			uint64_t gmem_vaddr = 0;
-
-			if (adreno_is_a5xx(adreno_dev) ||
-					adreno_is_a6xx(adreno_dev))
-				gmem_vaddr = adreno_dev->uche_gmem_base;
-			if (sizebytes != sizeof(uint64_t)) {
-				status = -EINVAL;
-				break;
-			}
-			if (copy_to_user(value, &gmem_vaddr,
-					sizeof(uint64_t))) {
-				status = -EFAULT;
-				break;
-			}
-			status = 0;
-		}
-		break;
-	case KGSL_PROP_SP_GENERIC_MEM:
-		{
-			struct kgsl_sp_generic_mem sp_mem;
-
-			if (sizebytes != sizeof(sp_mem)) {
-				status = -EINVAL;
-				break;
-			}
-			memset(&sp_mem, 0, sizeof(sp_mem));
-
-			sp_mem.local = adreno_dev->sp_local_gpuaddr;
-			sp_mem.pvt = adreno_dev->sp_pvt_gpuaddr;
-
-			if (copy_to_user(value, &sp_mem, sizeof(sp_mem))) {
-				status = -EFAULT;
-				break;
-			}
-			status = 0;
-		}
-		break;
-	case KGSL_PROP_UCODE_VERSION:
-		{
-			struct kgsl_ucode_version ucode;
-
-			if (sizebytes != sizeof(ucode)) {
-				status = -EINVAL;
-				break;
-			}
-			memset(&ucode, 0, sizeof(ucode));
-
-			ucode.pfp = adreno_dev->fw[ADRENO_FW_PFP].version;
-			ucode.pm4 = adreno_dev->fw[ADRENO_FW_PM4].version;
-
-			if (copy_to_user(value, &ucode, sizeof(ucode))) {
-				status = -EFAULT;
-				break;
-			}
-			status = 0;
-		}
-		break;
-	case KGSL_PROP_GPMU_VERSION:
-		{
-			struct kgsl_gpmu_version gpmu;
-
-			if (adreno_dev->gpucore == NULL) {
-				status = -EINVAL;
-				break;
-			}
-
-			if (!ADRENO_FEATURE(adreno_dev, ADRENO_GPMU)) {
-				status = -EOPNOTSUPP;
-				break;
-			}
-
-			if (sizebytes != sizeof(gpmu)) {
-				status = -EINVAL;
-				break;
-			}
-			memset(&gpmu, 0, sizeof(gpmu));
-
-			gpmu.major = adreno_dev->gpucore->gpmu_major;
-			gpmu.minor = adreno_dev->gpucore->gpmu_minor;
-			gpmu.features = adreno_dev->gpucore->gpmu_features;
-
-			if (copy_to_user(value, &gpmu, sizeof(gpmu))) {
-				status = -EFAULT;
-				break;
-			}
-			status = 0;
-		}
-		break;
-	case KGSL_PROP_HIGHEST_BANK_BIT:
-		{
-			unsigned int bit;
-
-			if (sizebytes < sizeof(unsigned int)) {
-				status = -EINVAL;
-				break;
-			}
-
-			if (of_property_read_u32(device->pdev->dev.of_node,
-				"qcom,highest-bank-bit", &bit)) {
-				status = -EINVAL;
-				break;
-			}
-
-			if (copy_to_user(value, &bit, sizeof(bit))) {
-				status = -EFAULT;
-				break;
-			}
-		}
-		status = 0;
-		break;
-	case KGSL_PROP_MIN_ACCESS_LENGTH:
-		{
-			unsigned int mal;
-
-			if (sizebytes < sizeof(unsigned int)) {
-				status = -EINVAL;
-				break;
-			}
-
-			if (of_property_read_u32(device->pdev->dev.of_node,
-				"qcom,min-access-length", &mal)) {
-				mal = 0;
-			}
-
-			if (copy_to_user(value, &mal, sizeof(mal))) {
-				status = -EFAULT;
-				break;
-			}
-		}
-		status = 0;
-		break;
-	case KGSL_PROP_UBWC_MODE:
-		{
-			unsigned int mode;
-
-			if (sizebytes < sizeof(unsigned int)) {
-				status = -EINVAL;
-				break;
-			}
-
-			if (of_property_read_u32(device->pdev->dev.of_node,
-				"qcom,ubwc-mode", &mode))
-				mode = 0;
-
-			if (copy_to_user(value, &mode, sizeof(mode))) {
-				status = -EFAULT;
-				break;
-			}
-		}
-		status = 0;
-		break;
-
-	case KGSL_PROP_DEVICE_BITNESS:
-	{
-		unsigned int bitness = 32;
-
-		if (sizebytes != sizeof(unsigned int)) {
-			status = -EINVAL;
-			break;
-		}
-		/* No of bits used by the GPU */
-		if (adreno_support_64bit(adreno_dev))
-			bitness = 48;
-
-		if (copy_to_user(value, &bitness,
-				sizeof(unsigned int))) {
-			status = -EFAULT;
-			break;
-		}
-		status = 0;
-	}
-	break;
-
-	case KGSL_PROP_SPEED_BIN:
-		{
-			unsigned int speed_bin;
-
-			if (sizebytes != sizeof(unsigned int)) {
-				status = -EINVAL;
-				break;
-			}
-
-			speed_bin = adreno_dev->speed_bin;
-
-			if (copy_to_user(value, &speed_bin,
-						sizeof(unsigned int))) {
-				status = -EFAULT;
-				break;
-			}
-			status = 0;
-		}
-		break;
-
-	case KGSL_PROP_GAMING_BIN:
-	{
-		unsigned int gaming_bin;
-
-		if (sizebytes != sizeof(unsigned int)) {
-			status = -EINVAL;
-			break;
-		}
-
-		gaming_bin = adreno_dev->gaming_bin ? 1 : 0;
-
-		if (copy_to_user(value, &gaming_bin,
-					sizeof(unsigned int))) {
-			status = -EFAULT;
-			break;
-		}
-		status = 0;
-	}
-	break;
-
-	case KGSL_PROP_MACROTILING_CHANNELS:
-	{
-		unsigned int channel;
-
-		if (sizebytes < sizeof(unsigned int)) {
-			status = -EINVAL;
-			break;
-		}
-
-		if (of_property_read_u32(device->pdev->dev.of_node,
-			"qcom,macrotiling-channels", &channel)) {
-			/* return error when not set in device tree
-			 * and let user decide.
-			 */
-			status = -EINVAL;
-			break;
-		}
-
-		if (copy_to_user(value, &channel, sizeof(channel))) {
-			status = -EFAULT;
-			break;
-		}
-		status = 0;
-	}
-	break;
-
-	default:
-		status = -EINVAL;
+	if (!IS_ERR(buf)) {
+		ret = copy_prop(param, buf, len);
+		kfree(buf);
+		return ret;
 	}
 
-	return status;
+	dev_err(device->dev, "failed to read gaming_bin nvmem cell\n");
+	return -EINVAL;
+}
+
+static int adreno_prop_u32(struct kgsl_device *device,
+		struct kgsl_device_getproperty *param)
+{
+	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
+	u32 val = 0;
+
+	if (param->type == KGSL_PROP_HIGHEST_BANK_BIT) {
+		of_property_read_u32(device->pdev->dev.of_node,
+			"qcom,highest-bank-bit", &val);
+	} else if (param->type == KGSL_PROP_MIN_ACCESS_LENGTH)
+		of_property_read_u32(device->pdev->dev.of_node,
+			"qcom,min-access-length", &val);
+	else if (param->type == KGSL_PROP_UBWC_MODE)
+		of_property_read_u32(device->pdev->dev.of_node,
+			"qcom,ubwc-mode", &val);
+	else if (param->type == KGSL_PROP_MACROTILING_CHANNELS)
+		of_property_read_u32(device->pdev->dev.of_node,
+			"qcom,macrotiling-channels", &val);
+	else if (param->type == KGSL_PROP_DEVICE_BITNESS)
+		val = adreno_support_64bit(adreno_dev) ? 48 : 32;
+	else if (param->type == KGSL_PROP_SPEED_BIN)
+		val = adreno_dev->speed_bin;
+
+	return copy_prop(param, &val, sizeof(val));
+}
+
+static const struct {
+	int type;
+	int (*func)(struct kgsl_device *device,
+		struct kgsl_device_getproperty *param);
+} adreno_property_funcs[] = {
+	{ KGSL_PROP_DEVICE_INFO, adreno_prop_device_info },
+	{ KGSL_PROP_DEVICE_SHADOW, adreno_prop_device_shadow },
+	{ KGSL_PROP_DEVICE_QDSS_STM, adreno_prop_device_qdss_stm },
+	{ KGSL_PROP_DEVICE_QTIMER, adreno_prop_device_qtimer },
+	{ KGSL_PROP_MMU_ENABLE, adreno_prop_s32 },
+	{ KGSL_PROP_INTERRUPT_WAITS, adreno_prop_s32 },
+	{ KGSL_PROP_UCHE_GMEM_VADDR, adreno_prop_uche_gmem_addr },
+	{ KGSL_PROP_SP_GENERIC_MEM, adreno_prop_sp_generic_mem },
+	{ KGSL_PROP_UCODE_VERSION, adreno_prop_ucode_version },
+	{ KGSL_PROP_GPMU_VERSION, adreno_prop_gpmu_version },
+	{ KGSL_PROP_HIGHEST_BANK_BIT, adreno_prop_u32 },
+	{ KGSL_PROP_MIN_ACCESS_LENGTH, adreno_prop_u32 },
+	{ KGSL_PROP_UBWC_MODE, adreno_prop_u32 },
+	{ KGSL_PROP_DEVICE_BITNESS, adreno_prop_u32 },
+	{ KGSL_PROP_SPEED_BIN, adreno_prop_u32 },
+	{ KGSL_PROP_GAMING_BIN, adreno_prop_gaming_bin },
+	{ KGSL_PROP_MACROTILING_CHANNELS, adreno_prop_u32 },
+};
+
+static int adreno_getproperty(struct kgsl_device *device,
+		struct kgsl_device_getproperty *param)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(adreno_property_funcs); i++) {
+		if (param->type == adreno_property_funcs[i].type)
+			return adreno_property_funcs[i].func(device, param);
+	}
+
+	return -ENODEV;
 }
 
 int adreno_set_constraint(struct kgsl_device *device,

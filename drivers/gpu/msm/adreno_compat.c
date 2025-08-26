@@ -21,19 +21,17 @@
 #include "adreno_compat.h"
 
 int adreno_getproperty_compat(struct kgsl_device *device,
-				unsigned int type,
-				void __user *value,
-				size_t sizebytes)
+			struct kgsl_device_getproperty *param)
 {
 	int status = -EINVAL;
 	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 
-	switch (type) {
+	switch (param->type) {
 	case KGSL_PROP_DEVICE_INFO:
 		{
 			struct kgsl_devinfo_compat devinfo;
 
-			if (sizebytes != sizeof(devinfo)) {
+			if (param->sizebytes != sizeof(devinfo)) {
 				status = -EINVAL;
 				break;
 			}
@@ -46,8 +44,7 @@ int adreno_getproperty_compat(struct kgsl_device *device,
 			devinfo.gmem_gpubaseaddr = adreno_dev->gmem_base;
 			devinfo.gmem_sizebytes = adreno_dev->gmem_size;
 
-			if (copy_to_user(value, &devinfo, sizeof(devinfo)) !=
-					0) {
+			if (copy_to_user(param->value, &devinfo, sizeof(devinfo))) {
 				status = -EFAULT;
 				break;
 			}
@@ -58,7 +55,7 @@ int adreno_getproperty_compat(struct kgsl_device *device,
 		{
 			struct kgsl_shadowprop_compat shadowprop;
 
-			if (sizebytes != sizeof(shadowprop)) {
+			if (param->sizebytes != sizeof(shadowprop)) {
 				status = -EINVAL;
 				break;
 			}
@@ -82,7 +79,7 @@ int adreno_getproperty_compat(struct kgsl_device *device,
 				shadowprop.flags = KGSL_FLAGS_INITIALIZED |
 					KGSL_FLAGS_PER_CONTEXT_TIMESTAMPS;
 			}
-			if (copy_to_user(value, &shadowprop,
+			if (copy_to_user(param->value, &shadowprop,
 				sizeof(shadowprop))) {
 				status = -EFAULT;
 				break;
@@ -96,7 +93,7 @@ int adreno_getproperty_compat(struct kgsl_device *device,
 			struct kgsl_memdesc *qdss_desc =
 				kgsl_mmu_get_qdss_global_entry(device);
 
-			if (sizebytes != sizeof(qdssprop)) {
+			if (param->sizebytes != sizeof(qdssprop)) {
 				status = -EINVAL;
 				break;
 			}
@@ -106,7 +103,7 @@ int adreno_getproperty_compat(struct kgsl_device *device,
 				qdssprop.size = qdss_desc->size;
 			}
 
-			if (copy_to_user(value, &qdssprop,
+			if (copy_to_user(param->value, &qdssprop,
 						sizeof(qdssprop))) {
 				status = -EFAULT;
 				break;
@@ -120,7 +117,7 @@ int adreno_getproperty_compat(struct kgsl_device *device,
 			struct kgsl_memdesc *qtimer_desc =
 				kgsl_mmu_get_qtimer_global_entry(device);
 
-			if (sizebytes != sizeof(qtimerprop)) {
+			if (param->sizebytes != sizeof(qtimerprop)) {
 				status = -EINVAL;
 				break;
 			}
@@ -130,7 +127,7 @@ int adreno_getproperty_compat(struct kgsl_device *device,
 				qtimerprop.size = qtimer_desc->size;
 			}
 
-			if (copy_to_user(value, &qtimerprop,
+			if (copy_to_user(param->value, &qtimerprop,
 						sizeof(qtimerprop))) {
 				status = -EFAULT;
 				break;
@@ -143,8 +140,7 @@ int adreno_getproperty_compat(struct kgsl_device *device,
 		 * Call the adreno_getproperty to check if the property type
 		 * was KGSL_PROP_MMU_ENABLE or KGSL_PROP_INTERRUPT_WAITS
 		 */
-		status = device->ftbl->getproperty(device, type, value,
-						sizebytes);
+		status = device->ftbl->getproperty(device, param);
 	}
 
 	return status;
