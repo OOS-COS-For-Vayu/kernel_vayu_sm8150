@@ -339,7 +339,10 @@ enum kgsl_timestamp_type {
 #define KGSL_PROP_GAMING_BIN		0x26
 #define KGSL_PROP_CONTEXT_PROPERTY	0x28
 #define KGSL_PROP_GPU_MODEL		0x29
+#define KGSL_PROP_VK_DEVICE_ID		0x2A
+// TODO: remove KGSL_PROP_MACROTILING_CHANNELS
 #define KGSL_PROP_MACROTILING_CHANNELS	0x30
+// TODO: remove KGSL_PROP_MACROTILING_CHANNELS
 
 struct kgsl_shadowprop {
 	unsigned long gpuaddr;
