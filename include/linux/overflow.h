@@ -274,7 +274,7 @@ static inline size_t __must_check size_mul(size_t factor1, size_t factor2)
 }
 
 /**
- * size_add() - Calculate size_t addition with saturation at SIZE_MAX
+ * size_add1() - Calculate size_t addition with saturation at SIZE_MAX
  *
  * @addend1: first addend
  * @addend2: second addend
@@ -283,7 +283,7 @@ static inline size_t __must_check size_mul(size_t factor1, size_t factor2)
  * with any overflow causing the return value to be SIZE_MAX. The
  * lvalue must be size_t to avoid implicit type conversion.
  */
-static inline size_t __must_check size_add(size_t addend1, size_t addend2)
+static inline size_t __must_check size_add1(size_t addend1, size_t addend2)
 {
 	size_t bytes;
 
@@ -301,7 +301,7 @@ static inline size_t __must_check size_add(size_t addend1, size_t addend2)
  *
  * Returns: calculate @minuend - @subtrahend, both promoted to size_t,
  * with any overflow causing the return value to be SIZE_MAX. For
- * composition with the size_add() and size_mul() helpers, neither
+ * composition with the size_add1() and size_mul() helpers, neither
  * argument may be SIZE_MAX (or the result with be forced to SIZE_MAX).
  * The lvalue must be size_t to avoid implicit type conversion.
  */
@@ -373,6 +373,6 @@ static inline size_t __must_check size_sub(size_t minuend, size_t subtrahend)
  * Return: number of bytes needed or SIZE_MAX on overflow.
  */
 #define struct_size(p, member, count)					\
-	size_add(sizeof(*(p)), flex_array_size(p, member, count))
+	size_add1(sizeof(*(p)), flex_array_size(p, member, count))
 
 #endif /* __LINUX_OVERFLOW_H */
