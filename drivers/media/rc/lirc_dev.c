@@ -25,6 +25,7 @@
 #include <linux/poll.h>
 #include <linux/sched.h>
 #include <linux/wait.h>
+#include <uapi/linux/eventpoll.h>
 
 #include "rc-core-priv.h"
 #include <uapi/linux/lirc.h>

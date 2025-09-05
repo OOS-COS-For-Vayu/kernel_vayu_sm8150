@@ -701,6 +701,39 @@ static void timekeeping_forward_now(struct timekeeper *tk)
 
 	tk_normalize_xtime(tk);
 }
+/**
+ * __getnstimeofday64 - Returns the time of day in a timespec64.
+ * @ts:		pointer to the timespec to be set
+ *
+ * Updates the time of day in the timespec.
+ * Returns 0 on success, or -ve when suspended (timespec will be undefined).
+ */
+int __getnstimeofday64(struct timespec64 *ts)
+{
+	struct timekeeper *tk = &tk_core.timekeeper;
+	unsigned long seq;
+	u64 nsecs;
+
+	do {
+		seq = read_seqcount_begin(&tk_core.seq);
+
+		ts->tv_sec = tk->xtime_sec;
+		nsecs = timekeeping_get_ns(&tk->tkr_mono);
+
+	} while (read_seqcount_retry(&tk_core.seq, seq));
+
+	ts->tv_nsec = 0;
+	timespec64_add_ns(ts, nsecs);
+
+	/*
+	 * Do not bail out early, in case there were callers still using
+	 * the value, even in the face of the WARN_ON.
+	 */
+	if (unlikely(timekeeping_suspended))
+		return -EAGAIN;
+	return 0;
+}
+EXPORT_SYMBOL(__getnstimeofday64);
 
 /**
  * ktime_get_real_ts64 - Returns the time of day in a timespec64.
