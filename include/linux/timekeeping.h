@@ -36,6 +36,7 @@ void getboottime64(struct timespec64 *ts);
  */
 extern time64_t ktime_get_seconds(void);
 extern time64_t ktime_get_real_seconds(void);
+extern int __getnstimeofday64(struct timespec64 *tv);
 
 /*
  * ktime_t based interfaces
@@ -253,7 +254,5 @@ static inline struct timespec64 get_monotonic_coarse64(void)
 
 	return ts;
 }
-
-s64 get_total_sleep_time_nsec(void);
 
 #endif

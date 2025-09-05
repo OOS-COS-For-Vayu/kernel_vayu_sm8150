@@ -169,7 +169,7 @@ static void rt6_uncached_list_flush_dev(struct net *net, struct net_device *dev)
 			struct inet6_dev *rt_idev = rt->rt6i_idev;
 			struct net_device *rt_dev = rt->dst.dev;
 
-			if (rt_idev && rt_idev->dev == dev) {
+			if (rt_idev->dev == dev) {
 				rt->rt6i_idev = in6_dev_get(loopback_dev);
 				in6_dev_put(rt_idev);
 			}
@@ -2234,6 +2234,7 @@ static void ip6_negative_advice(struct sock *sk,
 	struct rt6_info *rt = (struct rt6_info *) dst;
 
 	if (rt->rt6i_flags & RTF_CACHE) {
+		rcu_read_lock();
 		if (rt6_check_expired(rt)) {
 			/* counteract the dst_release() in sk_dst_reset() */
 			dst_hold(dst);
@@ -2241,6 +2242,7 @@ static void ip6_negative_advice(struct sock *sk,
 
 			rt6_remove_exception_rt(rt);
 		}
+		rcu_read_unlock();
 		return;
 	}
 	sk_dst_reset(sk);
@@ -2568,17 +2570,12 @@ static unsigned int ip6_default_advmss(const struct dst_entry *dst)
 {
 	struct net_device *dev = dst->dev;
 	unsigned int mtu = dst_mtu(dst);
-	struct net *net;
+	struct net *net = dev_net(dev);
 
 	mtu -= sizeof(struct ipv6hdr) + sizeof(struct tcphdr);
 
-	rcu_read_lock();
-
-	net = dev_net_rcu(dev);
 	if (mtu < net->ipv6.sysctl.ip6_rt_min_advmss)
 		mtu = net->ipv6.sysctl.ip6_rt_min_advmss;
-
-	rcu_read_unlock();
 
 	/*
 	 * Maximal non-jumbo IPv6 payload is IPV6_MAXPLEN and
@@ -2731,7 +2728,6 @@ static int ip6_convert_metrics(struct net *net, struct fib6_info *rt,
 			       struct fib6_config *cfg)
 {
 	int err = 0;
-	struct net *net = cfg->fc_nlinfo.nl_net;
 
 	if (cfg->fc_mx) {
 		rt->fib6_metrics = kzalloc(sizeof(*rt->fib6_metrics),
