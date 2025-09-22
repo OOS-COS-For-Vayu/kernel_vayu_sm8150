@@ -119,71 +119,36 @@ static void selinux_fs_info_free(struct super_block *sb)
 #define SEL_INO_MASK			0x00ffffff
 
 #define TMPBUFLEN	12
+static int enforcing_status = 1;
 static ssize_t sel_read_enforce(struct file *filp, char __user *buf,
 				size_t count, loff_t *ppos)
 {
-	struct selinux_fs_info *fsi = file_inode(filp)->i_sb->s_fs_info;
+	//struct selinux_fs_info *fsi = file_inode(filp)->i_sb->s_fs_info;
 	char tmpbuf[TMPBUFLEN];
 	ssize_t length;
 
-	length = scnprintf(tmpbuf, TMPBUFLEN, "%d",
-			   enforcing_enabled(fsi->state));
+	length = scnprintf(tmpbuf, TMPBUFLEN, "%d",enforcing_status);
 	return simple_read_from_buffer(buf, count, ppos, tmpbuf, length);
 }
+
+static int __init selinux_permissive_param(char *str)
+{
+	if (*str)
+		return 0;
+
+	enforcing_status = 0;
+	pr_info("selinux: ROM requested to be permissive, disabling spoofing\n");
+
+	return 1;
+}
+__setup("androidboot.selinux=permissive", selinux_permissive_param);
 
 #ifdef CONFIG_SECURITY_SELINUX_DEVELOP
 static ssize_t sel_write_enforce(struct file *file, const char __user *buf,
 				 size_t count, loff_t *ppos)
-
 {
-	struct selinux_fs_info *fsi = file_inode(file)->i_sb->s_fs_info;
-	struct selinux_state *state = fsi->state;
-	char *page = NULL;
-	ssize_t length;
-	int old_value, new_value;
 
-	if (count >= PAGE_SIZE)
-		return -ENOMEM;
-
-	/* No partial writes. */
-	if (*ppos != 0)
-		return -EINVAL;
-
-	page = memdup_user_nul(buf, count);
-	if (IS_ERR(page))
-		return PTR_ERR(page);
-
-	length = -EINVAL;
-	if (sscanf(page, "%d", &new_value) != 1)
-		goto out;
-
-	new_value = !!new_value;
-
-	old_value = enforcing_enabled(state);
-	if (new_value != old_value) {
-		length = avc_has_perm(&selinux_state,
-				      current_sid(), SECINITSID_SECURITY,
-				      SECCLASS_SECURITY, SECURITY__SETENFORCE,
-				      NULL);
-		if (length)
-			goto out;
-		audit_log(current->audit_context, GFP_KERNEL, AUDIT_MAC_STATUS,
-			"enforcing=%d old_enforcing=%d auid=%u ses=%u",
-			new_value, old_value,
-			from_kuid(&init_user_ns, audit_get_loginuid(current)),
-			audit_get_sessionid(current));
-		enforcing_set(state, new_value);
-		if (new_value)
-			avc_ss_reset(state->avc, 0);
-		selnl_notify_setenforce(new_value);
-		selinux_status_update_setenforce(state, new_value);
-		if (!new_value)
-			call_lsm_notifier(LSM_POLICY_CHANGE, NULL);
-	}
-	length = count;
-out:
-	kfree(page);
-	return length;
+	return count;
 }
 #else
 #define sel_write_enforce NULL
