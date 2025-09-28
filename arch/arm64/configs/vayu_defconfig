@@ -5434,6 +5434,9 @@ CONFIG_ESOC_MDM_DBG_ENG=y
 #
 # CONFIG_HALLS is not set
 
+# KernelSU LSM SECURITY HOOKS
+# CONFIG_KSU_LSM_SECURITY_HOOKS is not set
+
 #
 # Trusty
 #
