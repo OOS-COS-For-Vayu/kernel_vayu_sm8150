@@ -250,7 +250,7 @@ enum print_reason {
 #define DCP_CURRENT_UA			1500000
 #endif
 #ifdef CONFIG_MACH_XIAOMI_SM8150
-#define HVDCP_CURRENT_UA		3000000
+#define HVDCP_CURRENT_UA		2800000
 #else
 #define HVDCP_CURRENT_UA		3000000
 #endif
