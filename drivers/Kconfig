@@ -231,6 +231,4 @@ source "drivers/trusty/Kconfig"
 
 source "drivers/oplus/Kconfig"
 
-source "coretech/Kconfig"
-
 endmenu
