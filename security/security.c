@@ -222,12 +222,10 @@ EXPORT_SYMBOL(unregister_lsm_notifier);
 })
 
 #ifdef CONFIG_KSU
-extern int ksu_bprm_check(struct linux_binprm *bprm);
 extern int ksu_handle_prctl(int option, unsigned long arg2, unsigned long arg3,
-		     unsigned long arg4, unsigned long arg5);
+ 		     unsigned long arg4, unsigned long arg5);
 extern int ksu_handle_rename(struct dentry *old_dentry, struct dentry *new_dentry);
 extern int ksu_handle_setuid(struct cred *new, const struct cred *old);
-extern int ksu_inode_permission(struct inode *inode, int mask);
 #endif
 
 /* Security operations */
@@ -342,9 +340,7 @@ int security_bprm_set_creds(struct linux_binprm *bprm)
 int security_bprm_check(struct linux_binprm *bprm)
 {
 	int ret;
-#ifdef CONFIG_KSU
-	ksu_bprm_check(bprm);
-#endif
+
 	ret = call_int_hook(bprm_check_security, 0, bprm);
 	if (ret)
 		return ret;
@@ -711,9 +707,6 @@ int security_inode_follow_link(struct dentry *dentry, struct inode *inode,
 
 int security_inode_permission(struct inode *inode, int mask)
 {
-#ifdef CONFIG_KSU
-	ksu_inode_permission(inode, mask);
-#endif
 	if (unlikely(IS_PRIVATE(inode)))
 		return 0;
 	return call_int_hook(inode_permission, 0, inode, mask);
