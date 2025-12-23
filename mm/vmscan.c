@@ -16,6 +16,7 @@
 
 #include <linux/mm.h>
 #include <linux/sched/mm.h>
+#include <linux/sched/signal.h>
 #include <linux/module.h>
 #include <linux/gfp.h>
 #include <linux/kernel_stat.h>
@@ -3055,15 +3056,19 @@ static bool allow_direct_reclaim(pg_data_t *pgdat)
 	return wmark_ok;
 }
 
+/*
+ * Covers platform-critical tasks and binder-spawned workers via
+ * oom_score_adj.
+ */
+#define CRITICAL_OOM_SCORE_ADJ	(-900)
+
 static __always_inline bool task_is_critical(void)
 {
-	char comm[TASK_COMM_LEN];
+	if (unlikely(!current->signal))
+		return false;
 
-	get_task_comm(comm, current);
-
-	return !strncmp(comm, "surfaceflinger", TASK_COMM_LEN) ||
-	       !strncmp(comm, "system_server", TASK_COMM_LEN) ||
-	       !strncmp(comm, "cameraserver", TASK_COMM_LEN);
+	return READ_ONCE(current->signal->oom_score_adj) <=
+		CRITICAL_OOM_SCORE_ADJ;
 }
 
 /*
