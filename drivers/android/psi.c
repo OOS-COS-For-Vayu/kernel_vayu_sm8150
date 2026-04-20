@@ -6,6 +6,8 @@
 #include <linux/module.h>
 #include <linux/poll.h>
 
+typedef unsigned int __poll_t;
+
 static bool psi_enable = true;
 
 static int __init setup_psi(char *str)
@@ -62,7 +64,7 @@ static ssize_t psi_cpu_write(struct file *file, const char __user *user_buf,
 	return 0;
 }
 
-static unsigned int psi_fop_poll(struct file *file, poll_table *wait)
+static __poll_t psi_fop_poll(struct file *file, poll_table *wait)
 {
 	return 0;
 }

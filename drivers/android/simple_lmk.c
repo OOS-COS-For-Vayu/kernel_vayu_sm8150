@@ -5,18 +5,17 @@
 
 #define pr_fmt(fmt) "simple_lmk: " fmt
 
-#include <linux/delay.h>
 #include <linux/freezer.h>
 #include <linux/kthread.h>
 #include <linux/mm.h>
+#include <linux/mmu_notifier.h>
 #include <linux/moduleparam.h>
 #include <linux/oom.h>
+#include <linux/ratelimit.h>
 #include <linux/sched/mm.h>
 #include <linux/sort.h>
 #include <linux/vmpressure.h>
 #include <uapi/linux/sched/types.h>
-#include <linux/ratelimit.h>
-#include "simple_lmk_compat.h"
 
 /* The minimum number of pages to free per reclaim */
 #define MIN_FREE_PAGES (CONFIG_ANDROID_SIMPLE_LMK_MINFREE * SZ_1M / PAGE_SIZE)
@@ -265,7 +264,7 @@ static void scan_and_kill(void)
 		set_bit(MMF_OOM_VICTIM, &mm->flags);
 
 		/* Accelerate the victim's death by forcing the kill signal */
-		do_send_sig_info(SIGKILL, SEND_SIG_FORCED, vtsk, PIDTYPE_TGID);
+		do_send_sig_info(SIGKILL, SEND_SIG_FORCED, vtsk, true);
 
 		/*
 		 * Mark the thread group dead so that other kernel code knows,
@@ -282,13 +281,13 @@ static void scan_and_kill(void)
 			set_tsk_thread_flag(t, TIF_MEMDIE);
 		for_each_thread(vtsk, t)
 			set_task_rt_prio(t, 1);
-		/* Signals can't wake frozen tasks; only a thaw operation can */
-		for_each_thread(vtsk, t)
-			__thaw_task(t);
 		rcu_read_unlock();
 
 		/* Allow the victim to run on any CPU. This won't schedule. */
 		set_cpus_allowed_ptr(vtsk, cpu_all_mask);
+
+		/* Signals can't wake frozen tasks; only a thaw operation can */
+		__thaw_task(vtsk);
 
 		/* Store the number of anon pages to sort victims for reaping */
 		victim->size = get_mm_counter(mm, MM_ANONPAGES);
@@ -313,8 +312,6 @@ static void scan_and_kill(void)
 	/* Wait until all the victims die or until the timeout is reached */
 	if (!wait_for_completion_timeout(&reclaim_done, RECLAIM_EXPIRES))
 		pr_info("Timeout hit waiting for victims to die, proceeding\n");
-	else
-		msleep(28);
 
 	/* Clean up for future reclaims but let the reaper thread keep going */
 	write_lock(&mm_free_lock);
@@ -355,6 +352,13 @@ static struct mm_struct *next_reap_victim(void)
 
 		/* Do a trylock so the reaper thread doesn't sleep */
 		if (!down_read_trylock(&mm->mmap_sem)) {
+			should_retry = true;
+			continue;
+		}
+
+		/* Skip any mm with notifiers for now since they can sleep */
+		if (mm_has_notifiers(mm)) {
+			up_read(&mm->mmap_sem);
 			should_retry = true;
 			continue;
 		}
@@ -402,13 +406,12 @@ static void reap_victims(void)
 		}
 
 		/*
-		 * Try to reap the victim. Unflag the mm for exit_mmap() reaping
-		 * and mark it as reaped with MMF_OOM_SKIP if successful.
+		 * Reap the victim, then unflag the mm for exit_mmap() reaping
+		 * and mark it as reaped with MMF_OOM_SKIP.
 		 */
-		if (__oom_reap_task_mm(mm)) {
-			clear_bit(MMF_OOM_VICTIM, &mm->flags);
-			set_bit(MMF_OOM_SKIP, &mm->flags);
-		}
+		__oom_reap_task_mm(mm);
+		clear_bit(MMF_OOM_VICTIM, &mm->flags);
+		set_bit(MMF_OOM_SKIP, &mm->flags);
 		up_read(&mm->mmap_sem);
 	}
 }
@@ -461,7 +464,7 @@ void simple_lmk_mm_freed(struct mm_struct *mm)
 static int simple_lmk_vmpressure_cb(struct notifier_block *nb,
 				    unsigned long pressure, void *data)
 {
-	if (pressure >= 98) {
+	if (pressure == 100) {
 		atomic_set(&needs_reclaim, 1);
 		smp_mb__after_atomic();
 		if (waitqueue_active(&oom_waitq))
