@@ -714,6 +714,11 @@ static void af_alg_free_areq_sgls(struct af_alg_async_req *areq)
 
 		sock_kfree_s(sk, tsgl, areq->tsgl_entries * sizeof(*tsgl));
 	}
+
+	if (areq->rsgl_tail)
+		sock_kfree_s(sk, areq->rsgl_tail, sizeof(*areq->rsgl_tail));
+	if (areq->rsgl_tail_buf)
+		sock_kfree_s(sk, areq->rsgl_tail_buf, 4);
 }
 
 /**
@@ -1154,6 +1159,9 @@ struct af_alg_async_req *af_alg_alloc_areq(struct sock *sk,
 	areq->areqlen = areqlen;
 	areq->sk = sk;
 	INIT_LIST_HEAD(&areq->rsgl_list);
+	areq->rsgl_tail = NULL;
+	areq->rsgl_tail_buf = NULL;
+
 	return areq;
 }
 EXPORT_SYMBOL_GPL(af_alg_alloc_areq);
