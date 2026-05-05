@@ -1,17 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2010 Marco Stornelli <marco.stornelli@gmail.com>
  * Copyright (C) 2011 Kees Cook <keescook@chromium.org>
  * Copyright (C) 2011 Google, Inc.
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  */
 
 #ifndef __LINUX_PSTORE_RAM_H__
@@ -31,6 +22,11 @@
  * PRZ_FLAG_NO_LOCK is used. For all other cases, locking is required.
  */
 #define PRZ_FLAG_NO_LOCK	BIT(0)
+/*
+ * If a PRZ should only have a single-boot lifetime, this marks it as
+ * getting wiped after its contents get copied out after boot.
+ */
+#define PRZ_FLAG_ZAP_OLD	BIT(1)
 
 struct persistent_ram_buffer;
 struct rs_control;
@@ -83,13 +79,14 @@ struct persistent_ram_zone {
 	phys_addr_t paddr;
 	size_t size;
 	void *vaddr;
+	char *label;
+	enum pstore_type_id type;
+	u32 flags;
+
+	raw_spinlock_t buffer_lock;
 	struct persistent_ram_buffer *buffer;
 	size_t buffer_size;
-	u32 flags;
-	raw_spinlock_t buffer_lock;
-	enum pstore_type_id type;
 
-	/* ECC correction */
 	char *par_buffer;
 	char *par_header;
 	struct rs_control *rs_decoder;
@@ -103,7 +100,7 @@ struct persistent_ram_zone {
 
 struct persistent_ram_zone *persistent_ram_new(phys_addr_t start, size_t size,
 			u32 sig, struct persistent_ram_ecc_info *ecc_info,
-			unsigned int memtype, u32 flags);
+			unsigned int memtype, u32 flags, char *label);
 void persistent_ram_free(struct persistent_ram_zone *prz);
 void persistent_ram_zap(struct persistent_ram_zone *prz);
 
