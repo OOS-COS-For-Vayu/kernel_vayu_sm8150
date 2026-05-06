@@ -766,6 +766,7 @@ static int ramoops_parse_dt(struct platform_device *pdev,
 			return ret;					\
 		field = value;						\
 	}
+#define parse_size(name, field) parse_u32(name, field, 0)
 
 	parse_size("record-size", pdata->record_size);
 	parse_size("console-size", pdata->console_size);
@@ -775,6 +776,7 @@ static int ramoops_parse_dt(struct platform_device *pdev,
 	parse_size("flags", pdata->flags);
 	parse_size("max-reason", pdata->max_reason);
 
+#undef parse_size
 #undef parse_u32
 
 	/*
@@ -789,7 +791,7 @@ static int ramoops_parse_dt(struct platform_device *pdev,
 	 * expected behavior.
 	 */
 	parent_node = of_get_parent(of_node);
-	if (!of_node_name_eq(parent_node, "reserved-memory") &&
+	if (of_node_cmp(parent_node->name, "reserved-memory") &&
 	    !pdata->console_size && !pdata->ftrace_size &&
 	    !pdata->pmsg_size && !pdata->ecc_info.ecc_size) {
 		pdata->console_size = pdata->record_size;

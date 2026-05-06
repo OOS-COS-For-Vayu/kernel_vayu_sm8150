@@ -63,7 +63,7 @@ static const char * const pstore_type_names[] = {
 static int pstore_new_entry;
 
 static void pstore_timefunc(struct timer_list *);
-static DEFINE_TIMER(pstore_timer, pstore_timefunc);
+static struct timer_list pstore_timer;
 
 static void pstore_dowork(struct work_struct *);
 static DECLARE_WORK(pstore_work, pstore_dowork);
@@ -814,6 +814,8 @@ static int __init pstore_init(void)
 	int ret;
 
 	pstore_choose_compression();
+
+	timer_setup(&pstore_timer, pstore_timefunc, 0);
 
 	/*
 	 * Check if any pstore backends registered earlier but did not
