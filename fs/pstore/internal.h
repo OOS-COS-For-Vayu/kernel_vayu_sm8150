@@ -40,4 +40,7 @@ extern void	pstore_record_init(struct pstore_record *record,
 /* Called during module_init() */
 extern void __init pstore_choose_compression(void);
 
+extern int __init pstore_init_fs(void);
+extern void __exit pstore_exit_fs(void);
+
 #endif
