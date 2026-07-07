@@ -105,6 +105,9 @@
 #define FASTRPC_STATIC_HANDLE_MAX (20)
 #define FASTRPC_LATENCY_CTRL_ENB  (1)
 
+/* Maximum PM timeout that can be voted through fastrpc */
+#define MAX_PM_TIMEOUT_MS 50
+
 #define MAX_SIZE_LIMIT (0x78000000)
 #define INIT_FILELEN_MAX (2*1024*1024)
 #define INIT_MEMLEN_MAX  (8*1024*1024)
@@ -234,7 +237,6 @@ struct smq_invoke_ctx {
 	uint32_t *crc;
 	unsigned int magic;
 	uint64_t ctxid;
-	bool pm_awake_voted;
 };
 
 struct fastrpc_ctx_lst {
@@ -413,6 +415,7 @@ struct fastrpc_file {
 	char *debug_buf;
 	/* Flag to enable PM wake/relax voting for every remote invoke */
 	int wake_enable;
+	uint32_t ws_timeout;
 	/* To indicate attempt has been made to allocate memory for debug_buf */
 	int debug_buf_alloced_attempted;
 };
@@ -472,9 +475,7 @@ static struct fastrpc_channel_ctx gcinfo[NUM_CHANNELS] = {
 static int hlosvm[1] = {VMID_HLOS};
 static int hlosvmperm[1] = {PERM_READ | PERM_WRITE | PERM_EXEC};
 
-static void fastrpc_pm_awake(int fl_wake_enable, bool *pm_awake_voted,
-			int channel_type);
-static void fastrpc_pm_relax(bool *pm_awake_voted, int channel_type);
+static void fastrpc_pm_awake(struct fastrpc_file *fl, int channel_type);
 
 static inline int64_t getnstimediff(struct timespec64 *start)
 {
@@ -1290,7 +1291,6 @@ static int context_alloc(struct fastrpc_file *fl, uint32_t kernel,
 	ctx->tgid = fl->tgid;
 	init_completion(&ctx->work);
 	ctx->magic = FASTRPC_CTX_MAGIC;
-	ctx->pm_awake_voted = false;
 
 	spin_lock(&fl->hlock);
 	hlist_add_head(&ctx->hn, &clst->pending);
@@ -1364,8 +1364,7 @@ static void context_free(struct smq_invoke_ctx *ctx)
 static void context_notify_user(struct smq_invoke_ctx *ctx, int retval)
 {
 	ctx->retval = retval;
-	fastrpc_pm_awake(ctx->fl->wake_enable, &ctx->pm_awake_voted,
-		gcinfo[ctx->fl->cid].secure);
+	fastrpc_pm_awake(ctx->fl, gcinfo[ctx->fl->cid].secure);
 	complete(&ctx->work);
 }
 
@@ -1995,31 +1994,23 @@ static void fastrpc_init(struct fastrpc_apps *me)
 	me->channel[CDSP_DOMAIN_ID].unsigned_support = true;
 }
 
-static inline void fastrpc_pm_awake(int fl_wake_enable, bool *pm_awake_voted,
-				int channel_type)
+static inline void fastrpc_pm_awake(struct fastrpc_file *fl, int channel_type)
 {
 	struct fastrpc_apps *me = &gfa;
+	struct wakeup_source *wake_source = NULL;
 
-	if (!fl_wake_enable || *pm_awake_voted)
+	if (!fl->wake_enable)
 		return;
+	/*
+	 * Vote with PM to abort any suspend in progress and
+	 * keep system awake for specified timeout
+	 */
 	if (channel_type == SECURE_CHANNEL)
-		__pm_stay_awake(me->wake_source_secure);
+		wake_source = me->wake_source_secure;
 	else if (channel_type == NON_SECURE_CHANNEL)
-		__pm_stay_awake(me->wake_source);
-	*pm_awake_voted = true;
-}
-
-static inline void fastrpc_pm_relax(bool *pm_awake_voted, int channel_type)
-{
-	struct fastrpc_apps *me = &gfa;
-
-	if (!(*pm_awake_voted))
-		return;
-	if (channel_type == SECURE_CHANNEL)
-		__pm_relax(me->wake_source_secure);
-	else if (channel_type == NON_SECURE_CHANNEL)
-		__pm_relax(me->wake_source);
-	*pm_awake_voted = false;
+		wake_source = me->wake_source;
+	if (wake_source)
+		pm_wakeup_ws_event(wake_source, fl->ws_timeout, true);
 }
 
 static int fastrpc_internal_invoke(struct fastrpc_file *fl, uint32_t mode,
@@ -2031,7 +2022,6 @@ static int fastrpc_internal_invoke(struct fastrpc_file *fl, uint32_t mode,
 	int err = 0, cid = -1, interrupted = 0;
 	struct timespec64 invoket = {0};
 	int64_t *perf_counter = NULL;
-	bool pm_awake_voted;
 
 	cid = fl->cid;
 	VERIFY(err, cid >= ADSP_DOMAIN_ID && cid < NUM_CHANNELS);
@@ -2045,10 +2035,6 @@ static int fastrpc_internal_invoke(struct fastrpc_file *fl, uint32_t mode,
 		goto bail;
 	}
 	perf_counter = getperfcounter(fl, PERF_COUNT);
-	pm_awake_voted = false;
-	if (interrupted != -ERESTARTSYS)
-		fastrpc_pm_awake(fl->wake_enable, &pm_awake_voted,
-			gcinfo[cid].secure);
 	if (fl->profile)
 		ktime_get_real_ts64(&invoket);
 
@@ -2101,13 +2087,11 @@ static int fastrpc_internal_invoke(struct fastrpc_file *fl, uint32_t mode,
 	if (err)
 		goto bail;
  wait:
-	fastrpc_pm_relax(&pm_awake_voted, gcinfo[cid].secure);
 	if (kernel)
 		wait_for_completion(&ctx->work);
 	else
 		interrupted = wait_for_completion_interruptible(&ctx->work);
 
-	pm_awake_voted = ctx->pm_awake_voted;
 	VERIFY(err, 0 == (err = interrupted));
 	if (err)
 		goto bail;
@@ -2149,7 +2133,6 @@ bail:
 				*count = *count+1;
 		}
 	}
-	fastrpc_pm_relax(&pm_awake_voted, gcinfo[cid].secure);
 	return err;
 }
 
@@ -3798,6 +3781,21 @@ static int fastrpc_internal_control(struct fastrpc_file *fl,
 		break;
 	case FASTRPC_CONTROL_WAKELOCK:
 		fl->wake_enable = cp->wp.enable;
+		break;
+	case FASTRPC_CONTROL_PM:
+		if (!fl->wake_enable) {
+			/* Kernel PM voting not requested by this application */
+			err = -EACCES;
+			goto bail;
+		}
+		if (cp->pm.timeout > MAX_PM_TIMEOUT_MS)
+			fl->ws_timeout = MAX_PM_TIMEOUT_MS;
+		else
+			fl->ws_timeout = cp->pm.timeout;
+		VERIFY(err, fl->cid >= 0 && fl->cid < NUM_CHANNELS);
+		if (err)
+			goto bail;
+		fastrpc_pm_awake(fl, gcinfo[fl->cid].secure);
 		break;
 	default:
 		err = -EBADRQC;
