@@ -2735,7 +2735,7 @@ static void lru_gen_swap_refault(struct page *page, swp_entry_t entry)
 		return;
 
 	rcu_read_lock();
-	item = radix_tree_lookup(&mapping->i_pages, index);
+	item = radix_tree_lookup(&mapping->page_tree, index);
 	rcu_read_unlock();
 	if (radix_tree_exceptional_entry(item))
 		lru_gen_refault(page, item);
