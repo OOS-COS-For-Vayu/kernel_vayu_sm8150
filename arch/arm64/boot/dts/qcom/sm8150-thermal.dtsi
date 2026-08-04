@@ -872,8 +872,8 @@
 
 		trips {
 			active-config {
-				temperature = <85000>;
-				hysteresis = <25000>;
+				temperature = <95000>;
+				hysteresis = <5000>;
 				type = "passive";
 			};
 		};
@@ -888,8 +888,8 @@
 
 		trips {
 			active-config {
-				temperature = <85000>;
-				hysteresis = <25000>;
+				temperature = <100000>;
+				hysteresis = <5000>;
 				type = "passive";
 			};
 		};
