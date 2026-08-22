@@ -7,7 +7,11 @@
  */
 
 #define CREATE_TRACE_POINTS
+#ifdef CONFIG_TRACEPOINTS
 #include <trace/hooks/vendor_hooks.h>
+#else
+#include <trace/hooks/vendor_hooks_stub.h>
+#endif
 #include <trace/hooks/memory.h>
 #include <trace/hooks/syscall_check.h>
 
