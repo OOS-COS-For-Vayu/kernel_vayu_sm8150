@@ -13,6 +13,8 @@
 #include <linux/slab.h>
 #include <linux/thermal.h>
 
+extern atomic_t switch_mode;
+
 #define OF_READ_U32(node, prop, dst)						\
 ({										\
 	int ret = of_property_read_u32(node, prop, &(dst));			\
@@ -66,6 +68,19 @@ static void thermal_throttle_worker(struct work_struct *work)
 	s64 temp_total = 0, temp_avg = 0;
 	short i = 0;
 
+	/* If userspace thermal is active, disable msm_thermal_simple */
+	if (atomic_read(&switch_mode) != 0) {
+		old_zone = t->curr_zone;
+		if (old_zone) {
+			t->curr_zone = NULL;
+			update_online_cpu_policy();
+			pr_info("disabled by sconfig (%d), restoring CPU freqs\n",
+				atomic_read(&switch_mode));
+		}
+		queue_delayed_work(t->wq, &t->throttle_work, t->poll_jiffies);
+		return;
+	}
+
 	/* Store average temperature of all CPU cores */
 	for (i; i < NR_CPUS; i++) {
 		char zone_name[15];
@@ -109,7 +124,15 @@ static void thermal_throttle_worker(struct work_struct *work)
 
 	/* Update thermal zone if it changed */
 	if (new_zone != old_zone) {
-		pr_info("temp_avg: %i, temp_gpu: %i\n", temp_avg, temp_gpu);
+		if (!old_zone && new_zone)
+			pr_info("enabled, throttling at temp_avg: %i, temp_gpu: %i\n",
+				temp_avg, temp_gpu);
+		else if (old_zone && !new_zone)
+			pr_info("throttle cleared, temp_avg: %i, temp_gpu: %i\n",
+				temp_avg, temp_gpu);
+		else
+			pr_info("zone changed, temp_avg: %i, temp_gpu: %i\n",
+				temp_avg, temp_gpu);
 		t->curr_zone = new_zone;
 		update_online_cpu_policy();
 	}
@@ -138,7 +161,7 @@ static int cpu_notifier_cb(struct notifier_block *nb, unsigned long val,
 		return NOTIFY_OK;
 
 	zone = t->curr_zone;
-	if (zone)
+	if (zone && atomic_read(&switch_mode) == 0)
 		policy->max = get_throttle_freq(zone, policy->cpu);
 	else
 		policy->max = policy->user_policy.max;
@@ -244,6 +267,12 @@ static int msm_thermal_simple_probe(struct platform_device *pdev)
 	/* Fire up the persistent worker */
 	INIT_DELAYED_WORK(&t->throttle_work, thermal_throttle_worker);
 	queue_delayed_work(t->wq, &t->throttle_work, t->start_delay * HZ);
+
+	if (atomic_read(&switch_mode) != 0)
+		pr_info("sconfig=%d, starting in passive mode\n",
+			atomic_read(&switch_mode));
+	else
+		pr_info("sconfig=0, starting in active mode\n");
 
 	return 0;
 

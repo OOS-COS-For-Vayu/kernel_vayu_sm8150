@@ -77,7 +77,7 @@ struct screen_monitor {
 struct screen_monitor sm;
 #endif
 
-static atomic_t switch_mode = ATOMIC_INIT(10);
+atomic_t switch_mode = ATOMIC_INIT(0);
 static atomic_t temp_state = ATOMIC_INIT(0);
 static char boost_buf[128];
 #endif
