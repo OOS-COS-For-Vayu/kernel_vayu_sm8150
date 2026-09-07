@@ -101,15 +101,15 @@ static void thermal_throttle_worker(struct work_struct *work)
 	   games or GPU heavy tasks while maintaining good CPU
 	   performance in CPU only tasks */
 
-	if (temp_gpu >= 63000)
+	if (temp_gpu >= 71000)
 		/* GPU started to get hot, using base values
 		   so throttling is not so agressive at this point. */
 		temp_avg = (temp_total + 35000) / NR_CPUS;
-	else if (temp_gpu >= 65000)
+	else if (temp_gpu >= 73000)
 		temp_avg = (temp_total + 55000) / NR_CPUS;
-	else if (temp_gpu >= 68000)
+	else if (temp_gpu >= 76000)
 		temp_avg = (temp_total + 65000) / NR_CPUS;
-	else if (temp_gpu >= 70000)
+	else if (temp_gpu >= 78000)
 		temp_avg = (temp_total + temp_gpu) / NR_CPUS;
 		
 	old_zone = t->curr_zone;
