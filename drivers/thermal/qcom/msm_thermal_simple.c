@@ -68,6 +68,18 @@ static void thermal_throttle_worker(struct work_struct *work)
 	s64 temp_total = 0, temp_avg = 0;
 	short i = 0;
 
+	/* Skip throttling entirely during the first 120s of boot */
+	if (unlikely(ktime_get_boottime_ns() < 120ULL * NSEC_PER_SEC)) {
+		old_zone = t->curr_zone;
+		if (old_zone) {
+			t->curr_zone = NULL;
+			update_online_cpu_policy();
+			pr_info("boot grace period, restoring CPU freqs\n");
+		}
+		queue_delayed_work(t->wq, &t->throttle_work, t->poll_jiffies);
+		return;
+	}
+
 	/* If userspace thermal is active, disable msm_thermal_simple */
 	if (atomic_read(&switch_mode) != 0) {
 		old_zone = t->curr_zone;
