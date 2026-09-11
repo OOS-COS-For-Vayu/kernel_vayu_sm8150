@@ -1680,6 +1680,9 @@ thermal_sconfig_store(struct device *dev,
 {
 	int ret, val = -1;
 
+	if (unlikely(ktime_get_boottime_ns() < 120ULL * NSEC_PER_SEC))
+		return -EPERM;
+
 	ret = kstrtoint(buf, 10, &val);
 
 	atomic_set(&switch_mode, val);
