@@ -18,14 +18,13 @@
 EXPORT_TRACEPOINT_SYMBOL(sched_process_exit);
 EXPORT_TRACEPOINT_SYMBOL(sched_process_fork);
 EXPORT_TRACEPOINT_SYMBOL(sched_switch);
-EXPORT_TRACEPOINT_SYMBOL(vmscan_mm_vmscan_direct_reclaim_begin);
-EXPORT_TRACEPOINT_SYMBOL(vmscan_mm_vmscan_direct_reclaim_end);
-EXPORT_TRACEPOINT_SYMBOL(vmscan_mm_vmscan_kswapd_sleep);
-EXPORT_TRACEPOINT_SYMBOL(vmscan_mm_vmscan_kswapd_wake);
-EXPORT_TRACEPOINT_SYMBOL(oom_mark_victim);
-EXPORT_TRACEPOINT_SYMBOL(power_cpu_frequency);
-EXPORT_TRACEPOINT_SYMBOL(power_cpu_frequency_limits);
-EXPORT_TRACEPOINT_SYMBOL(scheduler_sched_cpu_util);
+EXPORT_TRACEPOINT_SYMBOL(mm_vmscan_direct_reclaim_begin);
+EXPORT_TRACEPOINT_SYMBOL(mm_vmscan_direct_reclaim_end);
+EXPORT_TRACEPOINT_SYMBOL(mm_vmscan_kswapd_sleep);
+EXPORT_TRACEPOINT_SYMBOL(mm_vmscan_kswapd_wake);
+EXPORT_TRACEPOINT_SYMBOL(mark_victim);
+EXPORT_TRACEPOINT_SYMBOL(cpu_frequency_limits);
+EXPORT_TRACEPOINT_SYMBOL(sched_cpu_util);
 EXPORT_TRACEPOINT_SYMBOL(gpu_mem_total);
 
 /* Weak symbols for optional tracepoints */
