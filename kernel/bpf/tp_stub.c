@@ -12,7 +12,9 @@
 #include <trace/events/vmscan.h>
 #include <trace/events/oom.h>
 #include <trace/events/power.h>
-#include <trace/events/gpu_mem.h>
+#ifdef CONFIG_TRACE_GPU_MEM
+ #include <trace/events/gpu_mem.h>
+#endif
 
 /* Export tracepoint symbols for BPF programs */
 EXPORT_TRACEPOINT_SYMBOL(sched_process_exit);
@@ -25,7 +27,9 @@ EXPORT_TRACEPOINT_SYMBOL(mm_vmscan_kswapd_wake);
 EXPORT_TRACEPOINT_SYMBOL(mark_victim);
 EXPORT_TRACEPOINT_SYMBOL(cpu_frequency_limits);
 EXPORT_TRACEPOINT_SYMBOL(sched_cpu_util);
-EXPORT_TRACEPOINT_SYMBOL(gpu_mem_total);
+#ifdef CONFIG_TRACE_GPU_MEM
+ EXPORT_TRACEPOINT_SYMBOL(gpu_mem_total);
+#endif
 
 /* Weak symbols for optional tracepoints */
 const struct bpf_func_proto * __weak bpf_tracing_func_proto(
