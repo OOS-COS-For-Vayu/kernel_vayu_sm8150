@@ -8,6 +8,7 @@
 #include <linux/fdtable.h>
 #include <linux/filter.h>
 #include <linux/btf_ids.h>
+#include <linux/mmap_lock.h>
 
 struct bpf_iter_seq_task_common {
 	struct pid_namespace *ns;
