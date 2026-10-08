@@ -4880,6 +4880,8 @@ static const struct file_operations kgsl_fops = {
 	.compat_ioctl = kgsl_compat_ioctl,
 };
 
+atomic64_t kgsl_gpu_mem_total = ATOMIC64_INIT(0);
+
 struct kgsl_driver kgsl_driver  = {
 	.process_mutex = __MUTEX_INITIALIZER(kgsl_driver.process_mutex),
 	.proclist_lock = __SPIN_LOCK_UNLOCKED(kgsl_driver.proclist_lock),

@@ -31,6 +31,8 @@
 #include "kgsl_drawobj.h"
 #include "kgsl_gmu_core.h"
 
+#include <trace/events/gpu_mem.h>
+
 #define KGSL_IOCTL_FUNC(_cmd, _func) \
 	[_IOC_NR((_cmd))] = \
 		{ .cmd = (_cmd), .func = (_func) }
@@ -568,10 +570,38 @@ struct kgsl_snapshot_object {
 
 struct kgsl_device *kgsl_get_device(int dev_idx);
 
+/* Sum of all per-process kgsl memory, reported as the global gpu_mem_total */
+extern atomic64_t kgsl_gpu_mem_total;
+
+/*
+ * Report the process and global GPU memory totals through the gpu_mem_total
+ * tracepoint, which Android's gpuMem BPF program uses for GPU memory stats.
+ */
+static inline void kgsl_trace_gpu_mem_total(struct kgsl_process_private *priv,
+	s64 delta)
+{
+#if IS_ENABLED(CONFIG_TRACE_GPU_MEM)
+	u64 global = atomic64_add_return(delta, &kgsl_gpu_mem_total);
+	u64 total = 0;
+	int i;
+
+	if (!trace_gpu_mem_total_enabled())
+		return;
+
+	for (i = 0; i < KGSL_MEM_ENTRY_MAX; i++)
+		total += atomic64_read(&priv->stats[i].cur);
+
+	trace_gpu_mem_total(0, pid_nr(priv->pid), total);
+	trace_gpu_mem_total(0, 0, global);
+#endif
+}
+
 static inline void kgsl_process_add_stats(struct kgsl_process_private *priv,
 	unsigned int type, uint64_t size)
 {
 	u64 ret = atomic64_add_return(size, &priv->stats[type].cur);
+
+	kgsl_trace_gpu_mem_total(priv, size);
 
 	if (ret > atomic64_read(&priv->stats[type].max))
 		atomic64_set(&priv->stats[type].max, ret);
@@ -586,6 +616,7 @@ static inline void kgsl_process_sub_stats(struct kgsl_process_private *priv,
 	struct mm_struct *mm;
 
 	atomic64_sub(size, &priv->stats[type].cur);
+	kgsl_trace_gpu_mem_total(priv, -(s64)size);
 	pid_struct = find_get_pid(pid_nr(priv->pid));
 	if (pid_struct) {
 		task = get_pid_task(pid_struct, PIDTYPE_PID);
