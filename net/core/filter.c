@@ -5809,7 +5809,7 @@ BPF_CALL_5(bpf_skb_check_mtu, struct sk_buff *, skb,
 		ret = BPF_MTU_CHK_RET_SUCCESS;
 
 		if (flags & BPF_MTU_CHK_SEGS &&
-		    !skb_gso_validate_network_len(skb, mtu))
+		    !skb_gso_validate_mtu(skb, mtu))
 			ret = BPF_MTU_CHK_RET_SEGS_TOOBIG;
 	}
 out:
@@ -9856,6 +9856,7 @@ static u32 sk_skb_convert_ctx_access(enum bpf_access_type type,
 				     struct bpf_prog *prog, u32 *target_size)
 {
 	struct bpf_insn *insn = insn_buf;
+	int off;
 
 	switch (si->off) {
 	case offsetof(struct __sk_buff, data_end):
@@ -10814,7 +10815,9 @@ const struct bpf_func_proto bpf_skc_to_udp6_sock_proto = {
 
 BPF_CALL_1(bpf_sock_from_file, struct file *, file)
 {
-	return (unsigned long)sock_from_file(file);
+	int err;
+
+	return (unsigned long)sock_from_file(file, &err);
 }
 
 BTF_ID_LIST(bpf_sock_from_file_btf_ids)
