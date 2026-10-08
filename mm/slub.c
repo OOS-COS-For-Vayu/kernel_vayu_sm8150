@@ -3988,7 +3988,8 @@ static size_t __ksize(const void *object)
 {
 	struct page *page;
 
-	if (unlikely(object == ZERO_SIZE_PTR))
+	/* NULL returns 0 as in upstream 5.x; the BPF verifier relies on it */
+	if (unlikely(ZERO_OR_NULL_PTR(object)))
 		return 0;
 
 	page = virt_to_head_page(object);
