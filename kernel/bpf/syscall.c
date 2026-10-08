@@ -4730,7 +4730,7 @@ BPF_CALL_1(bpf_sys_close, u32, fd)
 	 * This helper is allowed in the following callchain only:
 	 * sys_bpf->prog_test_run->bpf_prog->bpf_sys_close
 	 */
-	return close_fd(fd);
+	return __close_fd(current->files, fd);
 }
 
 static const struct bpf_func_proto bpf_sys_close_proto = {
