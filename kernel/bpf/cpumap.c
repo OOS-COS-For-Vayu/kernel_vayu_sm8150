@@ -320,7 +320,14 @@ static int cpu_map_kthread_run(void *data)
 
 			list_add_tail(&skb->list, &list);
 		}
-		netif_receive_skb_list(&list);
+		/* 4.14 has no netif_receive_skb_list() (4.19): deliver one by one */
+		while (!list_empty(&list)) {
+			struct sk_buff *skb = list_first_entry(&list, struct sk_buff, list);
+
+			list_del(&skb->list);
+			skb->next = NULL;
+			netif_receive_skb(skb);
+		}
 
 		/* Feedback loop via tracepoint */
 		trace_xdp_cpumap_kthread(rcpu->map_id, n, kmem_alloc_drops,
