@@ -18,6 +18,15 @@
 #include <linux/btf_ids.h>
 #include <linux/fdtable.h>
 
+/*
+ * 4.14 has no pidfds (pidfd_open is 5.3), so userspace cannot name a task
+ * for the map syscalls; BPF programs still use the task storage helpers.
+ */
+static struct pid *pidfd_get_pid(unsigned int fd, unsigned int *flags)
+{
+	return ERR_PTR(-EOPNOTSUPP);
+}
+
 DEFINE_BPF_STORAGE_CACHE(task_cache);
 
 static DEFINE_PER_CPU(int, bpf_task_storage_busy);
@@ -243,7 +252,7 @@ BPF_CALL_4(bpf_task_storage_get, struct bpf_map *, map, struct task_struct *,
 		goto unlock;
 
 	/* only allocate new storage, when the task is refcounted */
-	if (refcount_read(&task->usage) &&
+	if (atomic_read(&task->usage) &&
 	    (flags & BPF_LOCAL_STORAGE_GET_F_CREATE))
 		sdata = bpf_local_storage_update(
 			task, (struct bpf_local_storage_map *)map, value,
