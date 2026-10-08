@@ -1139,7 +1139,10 @@ BPF_CALL_3(bpf_timer_init, struct bpf_timer_kern *, timer, struct bpf_map *, map
 	t->map = map;
 	t->prog = NULL;
 	rcu_assign_pointer(t->callback_fn, NULL);
-	hrtimer_init(&t->timer, clockid, HRTIMER_MODE_REL_SOFT);
+	/* 4.14 has no softirq-expiry hrtimers (4.16); bpf timer callbacks
+	 * run from hardirq here. Map helpers take their locks irqsave.
+	 */
+	hrtimer_init(&t->timer, clockid, HRTIMER_MODE_REL);
 	t->timer.function = bpf_timer_cb;
 	timer->timer = t;
 out:
@@ -1224,7 +1227,7 @@ BPF_CALL_3(bpf_timer_start, struct bpf_timer_kern *, timer, u64, nsecs, u64, fla
 		ret = -EINVAL;
 		goto out;
 	}
-	hrtimer_start(&t->timer, ns_to_ktime(nsecs), HRTIMER_MODE_REL_SOFT);
+	hrtimer_start(&t->timer, ns_to_ktime(nsecs), HRTIMER_MODE_REL);
 out:
 	__bpf_spin_unlock_irqrestore(&timer->lock);
 	return ret;
