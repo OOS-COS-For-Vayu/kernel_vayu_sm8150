@@ -642,6 +642,22 @@ static inline void *kmalloc_array(size_t n, size_t size, gfp_t flags)
 }
 
 /**
+ * krealloc_array - reallocate memory for an array (from 5.11).
+ * @p: pointer to the memory chunk to reallocate
+ * @new_n: new number of elements to alloc
+ * @new_size: new size of a single member of the array
+ * @flags: the type of memory to allocate (see kmalloc)
+ */
+static inline void * __must_check krealloc_array(void *p, size_t new_n,
+						 size_t new_size, gfp_t flags)
+{
+	if (new_size != 0 && new_n > SIZE_MAX / new_size)
+		return NULL;
+
+	return krealloc(p, new_n * new_size, flags);
+}
+
+/**
  * kcalloc - allocate memory for an array. The memory is set to zero.
  * @n: number of elements.
  * @size: element size.
