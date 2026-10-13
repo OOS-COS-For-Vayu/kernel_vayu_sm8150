@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config OPLUS_FEATURE_CPU_JANKINFO
+	bool "OPLUS CPU Jank Info and Healthinfo"
+	default y
+	help
+	  Record CPU Jank Information, Sched Info, and Health Info.

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config OPLUS_BOOTPROF
+	bool "OPLUS Bootprof"
+	default y
+	help
+	  Record and display boot time profiling info in procfs.
