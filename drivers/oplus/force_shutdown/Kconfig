@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (C) 2018-2021 Oplus. All rights reserved.
+config OPLUS_FEATURE_FORCE_SHUTDOWN
+	bool "force shutdown"
+	default n
+	help
+	  define this config to enable force shutdown feature.

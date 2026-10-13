@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (C) 2018-2020 Oplus. All rights reserved.
+config PROCESS_RECLAIM_ENHANCE
+	bool "OPLUS Process Reclaim Enhancement"
+	default n
+	help
+	  Enable OPLUS Process Reclaim Enhancement driver.

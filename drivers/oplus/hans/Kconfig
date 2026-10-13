@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config OPLUS_FEATURE_HANS
+	bool "HANS kernel and HANS native communication channel"
+	default y
+	help
+	  Key events (signal/network package/binder) report to HANS native.

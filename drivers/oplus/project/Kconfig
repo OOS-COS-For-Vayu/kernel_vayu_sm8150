@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (C) 2018-2020 Oplus. All rights reserved.
+config OPLUS_FEATURE_OPROJECT
+	bool "config oplus project info for kernel"
+	default n
+	help
+	  define this config to define oplus project
+
+config OPLUS_SYSTEM_KERNEL_QCOM
+	bool "OPLUS system kernel for Qualcomm"
+	default y
+	help
+	  Enable OPLUS system kernel features on Qualcomm platforms.

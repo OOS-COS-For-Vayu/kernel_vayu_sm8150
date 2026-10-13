@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config OPLUS_FEATURE_STORAGE_IO_METRICS
+	bool "OPLUS Storage IO Metrics"
+	default y
+	help
+	  Collect various metrics on the IO path.
+
+source "drivers/oplus/storage/common/fmonitor/Kconfig"
+source "drivers/oplus/storage/storage_feature_in_module/common/storage_log/Kconfig"
