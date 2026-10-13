@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config OPLUS_FEATURES
+	bool "Enable OPlus Specific Drivers and Features"
+	default n
+	help
+	  Master switch for OPlus drivers (Frame Boost, HANS, OSI,
+	  Process Reclaim, Midas, etc.).
+
+if OPLUS_FEATURES
+source "drivers/oplus/hans/Kconfig"
+source "drivers/oplus/frame_boost/Kconfig"
+source "drivers/oplus/midas/Kconfig"
+source "drivers/oplus/vnet/Kconfig"
+source "drivers/oplus/devinfo/Kconfig"
+source "drivers/oplus/project/Kconfig"
+source "drivers/oplus/process_reclaim/Kconfig"
+source "drivers/oplus/force_shutdown/Kconfig"
+source "drivers/oplus/storage/Kconfig"
+source "drivers/oplus/bootprof/Kconfig"
+source "drivers/oplus/dump_reason/Kconfig"
+source "drivers/oplus/sched_info/Kconfig"
+source "drivers/oplus/binder_strategy/Kconfig"
+source "drivers/oplus/shutdown_detect/Kconfig"
+endif
