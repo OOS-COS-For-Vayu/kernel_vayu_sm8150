@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+menu "OPLUS Features"
+
+source "drivers/oplus/hans/Kconfig"
+source "drivers/oplus/frame_boost/Kconfig"
+source "drivers/oplus/midas/Kconfig"
+source "drivers/oplus/vnet/Kconfig"
+source "drivers/oplus/devinfo/Kconfig"
+source "drivers/oplus/project/Kconfig"
+source "drivers/oplus/process_reclaim/Kconfig"
+source "drivers/oplus/force_shutdown/Kconfig"
+source "drivers/oplus/storage/Kconfig"
+source "drivers/oplus/bootprof/Kconfig"
+source "drivers/oplus/dump_reason/Kconfig"
+source "drivers/oplus/sched_info/Kconfig"
+source "drivers/oplus/binder_strategy/Kconfig"
+source "drivers/oplus/shutdown_detect/Kconfig"
+
+endmenu

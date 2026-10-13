@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config OPLUS_FEATURE_DUMP_REASON
+	bool "OPLUS Dump Reason"
+	default y
+	help
+	  Record panic / dump reason into smem and device info.

@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config OPLUS_FEATURE_FRAME_BOOST
+	bool "Oplus Frame Boost support"
+	default y
+	help
+	  Oplus Frame Boost dynamically manages CPU frequency and scheduling
+	  for render threads and critical UI tasks.
+
+config OPLUS_FEATURE_MULTI_FBG
+	bool "Multi Render Thread Group Frame Boost"
+	depends on OPLUS_FEATURE_FRAME_BOOST
+	default y
+	help
+	  Support multiple frame boost groups (e.g. UI, render, composition).
