@@ -9,6 +9,7 @@
 #include <linux/ktime.h>
 #include <linux/seq_file.h>
 #include <linux/version.h>
+#include <linux/ftrace.h>
 #include <trace/events/sched.h>
 #if __has_include(<trace/hooks/mm.h>)
 #include <trace/hooks/mm.h>

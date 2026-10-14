@@ -134,19 +134,21 @@ static void osi_opp_init(void)
 	int  i, nr_caps, opp_idx;
 	struct freq_duration *freq_duration;
 	struct cpufreq_policy *pol;
-	struct em_perf_domain *pd;
 
 	for_each_possible_cpu(i) {
 		struct device *cpu_dev = get_cpu_device(i);
 		if (!cpu_dev)
 			return;
 		pol = cpufreq_cpu_get(i);
-		pd = em_cpu_get(i);
-		if (!pd || !pol) {
+		if (!pol) {
 			pr_info("cpu_get return NULL for cpu#%d", i);
 			continue;
 		}
-		nr_caps = pd->nr_perf_states;
+		nr_caps = cpufreq_table_count_valid_entries(pol);
+		if (nr_caps <= 0) {
+			cpufreq_cpu_put(pol);
+			continue;
+		}
 		per_cpu(opp_num, i) = nr_caps;
 		opp_idx = dev_pm_opp_get_opp_count(cpu_dev);
 		pr_info("opp_num:%d, opp_idx:%d,i:%d", nr_caps, opp_idx, i);

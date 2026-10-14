@@ -28,7 +28,11 @@ static u64 cpustat_bak[CPU_NUMS][NR_STATS];
 			IS_ENABLED(CONFIG_OPLUS_SYSTEM_KERNEL_QCOM)
 static inline u64 scale_exec_time(u64 delta, struct rq *rq)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)
 	return (delta * rq->task_exec_scale) >> 10;
+#else
+	return delta;
+#endif
 }
 #else
 static inline u64 scale_exec_time(u64 delta, struct rq *rq)

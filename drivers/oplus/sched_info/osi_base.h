@@ -15,6 +15,8 @@
 #include <kernel/sched/sched.h>
 #include <fs/proc/internal.h>
 #endif
+#include <linux/proc_fs.h>
+#include <linux/cpufreq.h>
 
 #if IS_ENABLED(CONFIG_JANK_DEBUG)
 #define JANK_DEBUG
