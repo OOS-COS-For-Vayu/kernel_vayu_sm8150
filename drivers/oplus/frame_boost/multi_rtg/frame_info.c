@@ -4,6 +4,7 @@
  */
 
 #include <linux/sched.h>
+#include <linux/sched/topology.h>
 #include "frame_boost.h"
 #include "frame_debug.h"
 

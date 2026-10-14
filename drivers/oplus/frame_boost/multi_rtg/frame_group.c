@@ -3,6 +3,7 @@
  * Copyright (C) 2020-2024 Oplus. All rights reserved.
  */
 #include <linux/sched.h>
+#include <linux/version.h>
 #include <linux/seq_file.h>
 #include <linux/sched/cpufreq.h>
 #include <linux/syscore_ops.h>
@@ -74,9 +75,9 @@ static struct task_struct *game_ed_user_task = NULL;
 static DEFINE_RAW_SPINLOCK(game_ed_lock); /* protect game_ed_user_task */
 static struct irq_work game_ed_irq_work;
 
-static struct list_head cluster_head;
+static struct list_head fbg_cluster_head;
 #define for_each_sched_cluster(cluster) \
-	list_for_each_entry_rcu(cluster, &cluster_head, list)
+	list_for_each_entry_rcu(cluster, &fbg_cluster_head, list)
 
 /*********************************
  * frame group common function
@@ -96,6 +97,10 @@ static inline void move_list(struct list_head *dst, struct list_head *src)
 	smp_mb();
 	dst->next = first;
 }
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)) && !defined(package_id)
+#define package_id cluster_id
+#endif
 
 static void get_possible_siblings(int cpuid, struct cpumask *cluster_cpus)
 {
@@ -197,7 +202,7 @@ static bool build_clusters(void)
 	struct list_head new_head;
 	int i;
 
-	INIT_LIST_HEAD(&cluster_head);
+	INIT_LIST_HEAD(&fbg_cluster_head);
 	INIT_LIST_HEAD(&new_head);
 
 	/* If this work failed, our cluster_head can still used with only one cluster struct */
@@ -213,7 +218,7 @@ static bool build_clusters(void)
 	}
 
 	assign_cluster_ids(&new_head);
-	move_list(&cluster_head, &new_head);
+	move_list(&fbg_cluster_head, &new_head);
 	return true;
 }
 
