@@ -33,7 +33,11 @@
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)
 #undef access_ok
-#define access_ok(addr, size) __range_ok((const void __user *)(addr), (unsigned long)(size))
+#define access_ok(addr, size) __range_ok((unsigned long)(addr), (size))
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
+#define mmap_lock mmap_sem
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)
