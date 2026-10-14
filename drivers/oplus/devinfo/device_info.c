@@ -23,7 +23,9 @@
 #include <linux/mmc/host.h>
 #include <linux/libfdt.h>
 #if !(defined(CONFIG_MTK_PLATFORM) || defined(CONFIG_OPLUS_DEVICE_INFO_MTK_PLATFORM))
+#if __has_include(<soc/qcom/of_common.h>)
 #include <soc/qcom/of_common.h>
+#endif
 #endif
 #include <linux/string.h>
 
