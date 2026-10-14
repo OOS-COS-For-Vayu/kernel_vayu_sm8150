@@ -3,7 +3,9 @@
 #define _SA_COMMON_H_
 
 #include <linux/sched.h>
+#if __has_include(<linux/oplus_sched.h>)
 #include <linux/oplus_sched.h>
+#endif
 
 struct task_struct;
 struct rq;
