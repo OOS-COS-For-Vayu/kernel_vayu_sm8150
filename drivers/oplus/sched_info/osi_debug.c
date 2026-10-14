@@ -216,6 +216,7 @@ static int jank_unit_test(char *buf)
 
 	switch (testcase) {
 	case 1:
+#if IS_ENABLED(CONFIG_ENERGY_MODEL)
 		cpu = smp_processor_id();
 		rd = cpu_rq(cpu)->rd;
 		pd = rcu_dereference(rd->pd);
@@ -234,6 +235,7 @@ static int jank_unit_test(char *buf)
 
 		pr_info("DEBUG BYHP2: cpu=%d, 0x=%x, pd_mask=[%*pbl]\n",
 				cpu, pd, cpumask_pr_args(pd_mask));
+#endif
 		break;
 	case 2:
 		for (i = 0; i < 16; i++) {
