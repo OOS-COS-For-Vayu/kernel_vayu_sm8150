@@ -121,27 +121,11 @@ static void cb_f2fs_issue_discard(void *ignore, struct block_device *dev,
     }
 };
 int gc_t;
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0)
-static void cb_f2fs_gc_begin(void *ignore, struct super_block *sb, int gc_type, bool no_bg_gc,
-            unsigned int nr_free_secs,
-            long long dirty_nodes, long long dirty_dents,
-            long long dirty_imeta, unsigned int free_sec,
-            unsigned int free_seg, int reserved_seg,
-            unsigned int prefree_seg)
-#elif LINUX_VERSION_CODE <= KERNEL_VERSION(6, 1, 0)
 static void cb_f2fs_gc_begin(void *ignore, struct super_block *sb, bool sync,
             bool background, long long dirty_nodes, long long dirty_dents,
             long long dirty_imeta, unsigned int free_sec,
             unsigned int free_seg, int reserved_seg,
             unsigned int prefree_seg)
-#else
-static void cb_f2fs_gc_begin(void *ignore, struct super_block *sb, int gc_type, bool no_bg_gc,
-            unsigned int nr_free_secs,
-            long long dirty_nodes, long long dirty_dents,
-            long long dirty_imeta, unsigned int free_sec,
-            unsigned int free_seg, int reserved_seg,
-            unsigned int prefree_seg)
-#endif
 {
     int i;
     u64 current_time_ns, elapse;
@@ -150,13 +134,7 @@ static void cb_f2fs_gc_begin(void *ignore, struct super_block *sb, int gc_type, 
         return;
     }
     current_time_ns = ktime_get_ns();
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0)
-    gc_t = no_bg_gc ? GC_FG : GC_BG;
-#elif LINUX_VERSION_CODE <= KERNEL_VERSION(6, 1, 0)
     gc_t = background ? GC_BG : GC_FG;
-#else
-    gc_t = no_bg_gc ? GC_FG : GC_BG;
-#endif
     for (i = 0; i < CYCLE_MAX; i++) {
         elapse = current_time_ns - atomic64_read(&f2fs_metrics_timestamp[i]);
         if (unlikely(elapse >= current_time_ns)) {
