@@ -1,5 +1,9 @@
 #include "io_metrics_entry.h"
 #include "procfs.h"
+
+#ifndef compl_time_stamp
+#define compl_time_stamp complete_time_stamp
+#endif
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(6, 1, 0)
 #include "drivers/scsi/ufs/ufshcd.h"
 #else
