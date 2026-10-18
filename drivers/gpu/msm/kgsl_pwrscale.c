@@ -16,6 +16,8 @@
 #include <linux/hrtimer.h>
 #include <linux/devfreq_cooling.h>
 #include <linux/pm_opp.h>
+#include <linux/input.h>
+#include <linux/moduleparam.h>
 
 #include "kgsl.h"
 #include "kgsl_pwrscale.h"
@@ -297,6 +299,93 @@ static inline bool _check_maxfreq(u32 flags)
 #endif
 
 /*
+ * Touch boost: the msm-adreno-tz governor needs several polling periods to leave the lowest
+ * frequency, so the first frames of an animation or a blur pass render too slowly. After a
+ * touch event keep the GPU at no less than gpu_boost_mhz for gpu_boost_ms (0 = off).
+ */
+#undef MODULE_PARAM_PREFIX
+#define MODULE_PARAM_PREFIX "kgsl_boost."
+static unsigned int gpu_boost_ms = 427;
+static unsigned int gpu_boost_mhz = 585;
+module_param(gpu_boost_ms, uint, 0644);
+module_param(gpu_boost_mhz, uint, 0644);
+static unsigned long gpu_boost_until;
+static bool gpu_boost_registered;
+
+static bool gpu_boost_active(void)
+{
+	return gpu_boost_ms &&
+		time_before(jiffies, READ_ONCE(gpu_boost_until));
+}
+
+static void gpu_boost_input_event(struct input_handle *handle,
+				  unsigned int type, unsigned int code,
+				  int value)
+{
+	WRITE_ONCE(gpu_boost_until, jiffies + msecs_to_jiffies(gpu_boost_ms));
+}
+
+static int gpu_boost_input_connect(struct input_handler *handler,
+				   struct input_dev *dev,
+				   const struct input_device_id *id)
+{
+	struct input_handle *handle;
+	int ret;
+
+	handle = kzalloc(sizeof(*handle), GFP_KERNEL);
+	if (!handle)
+		return -ENOMEM;
+
+	handle->dev = dev;
+	handle->handler = handler;
+	handle->name = "kgsl_gpu_boost_handle";
+
+	ret = input_register_handle(handle);
+	if (ret)
+		goto free_handle;
+
+	ret = input_open_device(handle);
+	if (ret)
+		goto unregister_handle;
+
+	return 0;
+
+unregister_handle:
+	input_unregister_handle(handle);
+free_handle:
+	kfree(handle);
+	return ret;
+}
+
+static void gpu_boost_input_disconnect(struct input_handle *handle)
+{
+	input_close_device(handle);
+	input_unregister_handle(handle);
+	kfree(handle);
+}
+
+static const struct input_device_id gpu_boost_ids[] = {
+	/* Multi-touch touchscreen */
+	{
+		.flags = INPUT_DEVICE_ID_MATCH_EVBIT |
+			INPUT_DEVICE_ID_MATCH_ABSBIT,
+		.evbit = { BIT_MASK(EV_ABS) },
+		.absbit = { [BIT_WORD(ABS_MT_POSITION_X)] =
+			BIT_MASK(ABS_MT_POSITION_X) |
+			BIT_MASK(ABS_MT_POSITION_Y) }
+	},
+	{ }
+};
+
+static struct input_handler gpu_boost_input_handler = {
+	.event		= gpu_boost_input_event,
+	.connect	= gpu_boost_input_connect,
+	.disconnect	= gpu_boost_input_disconnect,
+	.name		= "kgsl_gpu_boost_handler",
+	.id_table	= gpu_boost_ids
+};
+
+/*
  * kgsl_devfreq_target - devfreq_dev_profile.target callback
  * @dev: see devfreq.h
  * @freq: see devfreq.h
@@ -331,6 +420,9 @@ int kgsl_devfreq_target(struct device *dev, unsigned long *freq, u32 flags)
 	}
 
 	rec_freq = *freq;
+	if (gpu_boost_active())
+		rec_freq = max_t(unsigned long, rec_freq,
+				 (unsigned long)gpu_boost_mhz * 1000000UL);
 
 	mutex_lock(&device->mutex);
 	cur_freq = kgsl_pwrctrl_active_freq(pwr);
@@ -807,6 +899,9 @@ int kgsl_pwrscale_init(struct device *dev, const char *governor)
 	kgsl_gpu_sysfs_add_link(device->gpu_sysfs_kobj,
 			 &pwrscale->devfreqptr->dev.kobj,
 			"available_governors", "gpu_available_governor");
+
+	if (!gpu_boost_registered && !input_register_handler(&gpu_boost_input_handler))
+		gpu_boost_registered = true;
 
 	return 0;
 }
