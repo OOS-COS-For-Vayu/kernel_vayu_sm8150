@@ -275,3 +275,15 @@ long strnlen_unsafe_user(const void __user *unsafe_addr, long count)
 
 	return ret;
 }
+
+long copy_from_kernel_nofault(void *dst, const void *src, size_t size)
+{
+	return probe_kernel_read_strict(dst, src, size);
+}
+EXPORT_SYMBOL_GPL(copy_from_kernel_nofault);
+
+long strncpy_from_kernel_nofault(char *dst, const void *unsafe_addr, long count)
+{
+	return strncpy_from_unsafe_strict(dst, unsafe_addr, count);
+}
+EXPORT_SYMBOL_GPL(strncpy_from_kernel_nofault);
